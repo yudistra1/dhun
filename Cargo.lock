@@ -608,6 +608,7 @@ dependencies = [
  "cpal",
  "dhun-core",
  "dhun-engine",
+ "hound",
  "rtrb",
  "thiserror 1.0.69",
 ]

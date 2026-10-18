@@ -2,6 +2,28 @@
 
 Running log of non-obvious decisions, per CLAUDE.md. Newest first.
 
+## 2026-10-18 — M7 audio: recording, in-memory clip assets, unified mix path
+**Decisions:**
+- **Recording** (`dhun-io::Recorder`): the cpal input callback pushes samples into
+  an `rtrb` ring; a background thread drains it to a **32-bit float WAV**. The
+  audio thread never allocates/locks/does I/O; the writer thread does. Takes are
+  saved under the project's `audio/` folder.
+- **Clip data** (`dhun-engine::AudioAssets`): clips are decoded to in-memory
+  stereo frames (`Arc<ClipData>`) off the audio thread and shared with the
+  engine, so playback is a pure index. Decoupling assets from file paths lets the
+  engine stay testable with synthetic clips (no temp files).
+- **Unified mix path**: `render_offline` now runs through `RealtimeEngine`
+  instead of its own per-channel mixer, so offline == real-time sample-for-sample
+  (the golden render still matches) and audio clips mix in one place.
+- **Latency compensation** is modelled as the clip's `offset_frames` (trim from
+  the source start). Precise alignment is a manual calibration for v0.1; the
+  recorder does not yet auto-measure round-trip latency.
+- **Format**: `Project` gains `#[serde(default)] audio_tracks`, so pre-audio
+  `project.json` files still load (no format-version bump).
+- **Deferred**: in-app audio-track UI (arm/record/waveform) and round-trip
+  latency auto-calibration. Recording + clip playback are reachable via the CLI
+  (`dhun record`, and clips play in `render`).
+
 ## 2026-10-18 — M6 piano roll is step-style for v0.1
 **Decision:** the piano roll places fixed, one-step-long notes on a pitch × step
 grid (click to add/remove), reusing the sequencer's grid timing

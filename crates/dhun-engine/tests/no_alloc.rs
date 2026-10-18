@@ -88,6 +88,7 @@ fn drum_project() -> Project {
             note_lanes: vec![],
         }],
         song: vec![1],
+        audio_tracks: vec![],
         master: Master::default(),
     }
 }

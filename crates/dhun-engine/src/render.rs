@@ -10,9 +10,10 @@ use dhun_core::SampleRate;
 use dhun_dsp::db_to_lin;
 use dhun_project::Project;
 
+use crate::audio::AudioAssets;
 use crate::error::EngineError;
-use crate::schedule::{collect_channel_events, song_total_samples, ScheduledEvent, Timing};
-use crate::voice::{build_voice, Voice};
+use crate::player::RealtimeEngine;
+use crate::schedule::Timing;
 
 /// Extra time rendered after the song ends so note/drum tails are not cut off.
 pub(crate) const TAIL_SECONDS: f64 = 2.0;
@@ -61,7 +62,7 @@ pub(crate) fn pan_gains(gain_db: f32, pan: f32) -> (f32, f32) {
     (theta.cos() * gain, theta.sin() * gain)
 }
 
-/// Renders a validated project offline.
+/// Renders a validated project offline, with no audio clips.
 ///
 /// `range` limits output to a bar window; `None` renders the whole song plus a
 /// short tail.
@@ -72,6 +73,22 @@ pub(crate) fn pan_gains(gain_db: f32, pan: f32) -> (f32, f32) {
 pub fn render_offline(
     project: &Project,
     range: Option<RenderRange>,
+) -> Result<RenderedAudio, EngineError> {
+    render_offline_with(project, range, &AudioAssets::empty())
+}
+
+/// Renders a validated project offline, mixing in audio clips from `assets`
+/// (recorded tracks).
+///
+/// Shares the real-time engine's mix path, so an offline render is sample-for-
+/// sample what playback produces.
+///
+/// # Errors
+/// As [`render_offline`].
+pub fn render_offline_with(
+    project: &Project,
+    range: Option<RenderRange>,
+    assets: &AudioAssets,
 ) -> Result<RenderedAudio, EngineError> {
     project.validate()?;
 
@@ -84,47 +101,21 @@ pub fn render_offline(
         }
     }
 
-    let sample_rate = SampleRate::new(project.sample_rate).expect("sample rate validated");
-    let timing = Timing::new(project, sample_rate);
-    let tail = (TAIL_SECONDS * f64::from(timing.sample_rate())) as usize;
-    let total_frames = song_total_samples(project, &timing) + tail;
-
-    let mut left = vec![0.0f32; total_frames];
-    let mut right = vec![0.0f32; total_frames];
-    let any_solo = project.channels.iter().any(|c| c.mixer.solo);
-
-    for channel in &project.channels {
-        if channel.mixer.mute || (any_solo && !channel.mixer.solo) {
-            continue;
-        }
-
-        let mut voice = build_voice(&channel.instrument, timing.sample_rate() as f32);
-        let mut events = collect_channel_events(project, channel.id, &timing);
-        events.retain(|e| e.at < total_frames);
-        events.sort_by_key(|e| e.at);
-
-        let mono = render_voice(&mut voice, &events, total_frames);
-        let (lg, rg) = pan_gains(channel.mixer.gain_db, channel.mixer.pan);
-        for (i, &s) in mono.iter().enumerate() {
-            left[i] += s * lg;
-            right[i] += s * rg;
-        }
-    }
-
-    let master = db_to_lin(project.master.gain_db);
-    let mut interleaved = Vec::with_capacity(total_frames * 2);
-    for i in 0..total_frames {
-        interleaved.push(left[i] * master);
-        interleaved.push(right[i] * master);
-    }
+    let mut engine = RealtimeEngine::prepare_with(project, None, assets)?;
+    let total_frames = engine.total_frames();
+    let mut interleaved = vec![0.0f32; total_frames * 2];
+    engine.play();
+    engine.process(&mut interleaved);
 
     let mut audio = RenderedAudio {
-        sample_rate: timing.sample_rate(),
+        sample_rate: engine.sample_rate(),
         frames: total_frames,
         interleaved,
     };
 
     if let Some(r) = range {
+        let sr = SampleRate::new(project.sample_rate).expect("sample rate validated");
+        let timing = Timing::new(project, sr);
         let start = timing.bar_to_frame(r.start_bar).min(audio.frames);
         let end = timing.bar_to_frame(r.end_bar).min(audio.frames);
         audio.interleaved = audio.interleaved[start * 2..end * 2].to_vec();
@@ -132,20 +123,6 @@ pub fn render_offline(
     }
 
     Ok(audio)
-}
-
-/// Renders one voice to a mono buffer, applying its events in time order.
-fn render_voice(voice: &mut Voice, events: &[ScheduledEvent], total_frames: usize) -> Vec<f32> {
-    let mut buf = vec![0.0f32; total_frames];
-    let mut ei = 0;
-    for (i, out) in buf.iter_mut().enumerate() {
-        while ei < events.len() && events[ei].at == i {
-            voice.apply(&events[ei].kind);
-            ei += 1;
-        }
-        *out = voice.tick();
-    }
-    buf
 }
 
 #[cfg(test)]

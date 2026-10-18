@@ -12,6 +12,4 @@ dhun-core.workspace = true
 dhun-dsp.workspace = true
 dhun-project.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
 hound.workspace = true

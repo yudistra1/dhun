@@ -14,6 +14,10 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod record;
+
+pub use record::{Recorder, Recording};
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -29,6 +33,18 @@ pub enum IoError {
     /// No default output device is available.
     #[error("no default audio output device")]
     NoOutputDevice,
+
+    /// No default input device is available.
+    #[error("no default audio input device")]
+    NoInputDevice,
+
+    /// The WAV writer could not be read or written.
+    #[error("wav error: {0}")]
+    Wav(#[from] hound::Error),
+
+    /// The recording writer thread panicked.
+    #[error("recording writer thread panicked")]
+    WriterPanicked,
 
     /// The device uses a sample format Dhun does not handle.
     #[error("unsupported output sample format: {0:?}")]

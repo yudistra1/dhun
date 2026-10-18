@@ -29,6 +29,12 @@ pub struct Project {
     pub patterns: Vec<Pattern>,
     /// Linear song arrangement: pattern ids played in order (SPEC §3.2).
     pub song: Vec<u64>,
+    /// Recorded audio tracks placed on the global timeline (SPEC §3.4).
+    ///
+    /// `#[serde(default)]` keeps projects written before audio tracks existed
+    /// loadable.
+    #[serde(default)]
+    pub audio_tracks: Vec<AudioTrack>,
     /// Master channel settings.
     pub master: Master,
 }
@@ -44,9 +50,44 @@ impl Default for Project {
             channels: Vec::new(),
             patterns: Vec::new(),
             song: Vec::new(),
+            audio_tracks: Vec::new(),
             master: Master::default(),
         }
     }
+}
+
+/// A track of recorded audio clips with its own mixer strip (SPEC §3.4).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AudioTrack {
+    /// Stable track id.
+    pub id: u64,
+    /// Human-readable name.
+    pub name: String,
+    /// Mixer settings for the track.
+    pub mixer: MixerStrip,
+    /// Clips placed on this track.
+    pub clips: Vec<AudioClip>,
+}
+
+/// A recorded audio clip, stored as a WAV in the project's `audio/` folder and
+/// placed on the timeline.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AudioClip {
+    /// Source file, relative to the project folder (e.g. `audio/take1.wav`).
+    pub source: String,
+    /// Placement on the global timeline, in ticks.
+    pub start_tick: u32,
+    /// Frames trimmed from the start of the source. Also used for latency
+    /// compensation: set to the input latency so the first played frame lands
+    /// on the beat (SPEC §3.4).
+    #[serde(default)]
+    pub offset_frames: u32,
+    /// Clip length in frames; `0` plays to the end of the source.
+    #[serde(default)]
+    pub length_frames: u32,
+    /// Clip gain in decibels.
+    #[serde(default)]
+    pub gain_db: f32,
 }
 
 /// An instrument channel with its own mixer strip.

@@ -10,10 +10,13 @@
 //! drop off-thread. So step, mixer, and tempo edits are heard as the loop
 //! plays, without ever allocating or freeing on the audio thread.
 
+use std::sync::Arc;
+
 use dhun_core::SampleRate;
 use dhun_dsp::db_to_lin;
 use dhun_project::Project;
 
+use crate::audio::{AudioAssets, ClipData};
 use crate::error::EngineError;
 use crate::render::{pan_gains, TAIL_SECONDS};
 use crate::schedule::{collect_channel_events, song_total_samples, Timing};
@@ -26,6 +29,20 @@ struct ChanEvent {
     kind: EventKind,
 }
 
+/// A placed audio clip ready for sample-accurate playback.
+struct AudioPlayback {
+    /// First output frame at which the clip sounds.
+    start: usize,
+    /// One past the last output frame.
+    end: usize,
+    /// Read offset into the source (trim / latency compensation).
+    offset: usize,
+    /// Left/right gains (track mix × clip gain, mute/solo applied).
+    lg: f32,
+    rg: f32,
+    data: Arc<ClipData>,
+}
+
 /// A swappable snapshot of what to play: the scheduled events plus per-voice and
 /// master mix. Built from a [`Project`] off the audio thread.
 ///
@@ -36,27 +53,45 @@ pub struct Program {
     events: Vec<ChanEvent>,
     /// Effective (left, right) gain per channel, with mute/solo already applied.
     gains: Vec<(f32, f32)>,
+    audio: Vec<AudioPlayback>,
     master: f32,
     song_frames: usize,
     total_frames: usize,
 }
 
 impl Program {
-    /// Builds a program from a project at the given sample rate. Allocates —
-    /// call off the audio thread.
+    /// Builds a program from a project at the given sample rate, with no audio
+    /// clips loaded.
     ///
     /// # Errors
     /// Returns [`EngineError::UnsupportedSampleRate`] if the rate is not
     /// supported.
     pub fn build(project: &Project, sample_rate: u32) -> Result<Program, EngineError> {
+        Self::build_with(project, sample_rate, &AudioAssets::empty())
+    }
+
+    /// Builds a program, placing audio clips from `assets`. Allocates — call off
+    /// the audio thread.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::UnsupportedSampleRate`] if the rate is not
+    /// supported.
+    pub fn build_with(
+        project: &Project,
+        sample_rate: u32,
+        assets: &AudioAssets,
+    ) -> Result<Program, EngineError> {
         let sr = SampleRate::new(sample_rate)
             .map_err(|_| EngineError::UnsupportedSampleRate(sample_rate))?;
         let timing = Timing::new(project, sr);
         let song_frames = song_total_samples(project, &timing);
         let tail = (TAIL_SECONDS * f64::from(sr.get())) as usize;
-        let total_frames = song_frames + tail;
+        let mut total_frames = song_frames + tail;
 
-        let any_solo = project.channels.iter().any(|c| c.mixer.solo);
+        // Solo across both instrument channels and audio tracks.
+        let any_solo = project.channels.iter().any(|c| c.mixer.solo)
+            || project.audio_tracks.iter().any(|t| t.mixer.solo);
+
         let mut gains = Vec::with_capacity(project.channels.len());
         let mut events = Vec::new();
 
@@ -79,9 +114,45 @@ impl Program {
         }
         events.sort_by_key(|e| e.at);
 
+        // Place audio clips.
+        let mut audio = Vec::new();
+        for track in &project.audio_tracks {
+            let audible = !track.mixer.mute && (!any_solo || track.mixer.solo);
+            let (tlg, trg) = if audible {
+                pan_gains(track.mixer.gain_db, track.mixer.pan)
+            } else {
+                (0.0, 0.0)
+            };
+            for clip in &track.clips {
+                let Some(data) = assets.get(&clip.source) else {
+                    continue; // clip not loaded (e.g. device playback) — skip
+                };
+                let offset = (clip.offset_frames as usize).min(data.len());
+                let available = data.len() - offset;
+                let len = if clip.length_frames == 0 {
+                    available
+                } else {
+                    (clip.length_frames as usize).min(available)
+                };
+                let start = timing.tick_to_sample(clip.start_tick);
+                let end = start + len;
+                total_frames = total_frames.max(end);
+                let clip_gain = db_to_lin(clip.gain_db);
+                audio.push(AudioPlayback {
+                    start,
+                    end,
+                    offset,
+                    lg: tlg * clip_gain,
+                    rg: trg * clip_gain,
+                    data,
+                });
+            }
+        }
+
         Ok(Program {
             events,
             gains,
+            audio,
             master: db_to_lin(project.master.gain_db),
             song_frames,
             total_frames,
@@ -118,6 +189,19 @@ impl RealtimeEngine {
     /// [`EngineError::UnsupportedSampleRate`] if the override rate is not
     /// supported.
     pub fn prepare(project: &Project, sample_rate: Option<u32>) -> Result<Self, EngineError> {
+        Self::prepare_with(project, sample_rate, &AudioAssets::empty())
+    }
+
+    /// Like [`RealtimeEngine::prepare`], but with audio clips loaded from
+    /// `assets` so recorded tracks play back.
+    ///
+    /// # Errors
+    /// As [`RealtimeEngine::prepare`].
+    pub fn prepare_with(
+        project: &Project,
+        sample_rate: Option<u32>,
+        assets: &AudioAssets,
+    ) -> Result<Self, EngineError> {
         project.validate()?;
         let sr = match sample_rate {
             Some(s) => SampleRate::new(s).map_err(|_| EngineError::UnsupportedSampleRate(s))?,
@@ -128,7 +212,7 @@ impl RealtimeEngine {
             .iter()
             .map(|c| build_voice(&c.instrument, sr.get() as f32))
             .collect();
-        let program = Box::new(Program::build(project, sr.get())?);
+        let program = Box::new(Program::build_with(project, sr.get(), assets)?);
 
         Ok(Self {
             sample_rate: sr.get(),
@@ -257,6 +341,14 @@ impl RealtimeEngine {
                 l += v * lg;
                 r += v * rg;
             }
+            // Mix any audio clips sounding at this frame.
+            for clip in &self.program.audio {
+                if self.position >= clip.start && self.position < clip.end {
+                    let (sl, sr) = clip.data.frames[clip.offset + (self.position - clip.start)];
+                    l += sl * clip.lg;
+                    r += sr * clip.rg;
+                }
+            }
             frame[0] = l * master;
             frame[1] = r * master;
             self.position += 1;
@@ -381,6 +473,47 @@ mod tests {
         assert!(
             after.iter().any(|&s| s != 0.0),
             "a step added live should be heard on the next loop pass"
+        );
+    }
+
+    #[test]
+    fn audio_clip_plays_at_its_tick_with_gain() {
+        use crate::render::render_offline_with;
+        use dhun_project::{AudioClip, AudioTrack, MixerStrip};
+
+        // An impulse clip: frame 0 = 1.0, frame 2 = 0.5.
+        let mut assets = AudioAssets::empty();
+        let mut frames = vec![(0.0f32, 0.0f32); 16];
+        frames[0] = (1.0, 1.0);
+        frames[2] = (0.5, 0.5);
+        assets.insert_frames("take.wav", frames);
+
+        let mut project = one_kick_project();
+        project.patterns[0].drum_lanes[0].steps[0].on = false; // isolate the clip
+        project.audio_tracks.push(AudioTrack {
+            id: 100,
+            name: "Gtr".to_string(),
+            mixer: MixerStrip::default(), // 0 dB, center
+            clips: vec![AudioClip {
+                source: "take.wav".to_string(),
+                start_tick: 240, // one step @ 120/48k = 6000 frames
+                offset_frames: 0,
+                length_frames: 0,
+                gain_db: 0.0,
+            }],
+        });
+
+        let audio = render_offline_with(&project, None, &assets).unwrap();
+        let at = 6000usize; // tick_to_sample(240)
+                            // Center pan => ~0.707 per side.
+        assert!(
+            (audio.interleaved[at * 2] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-3,
+            "clip impulse should land at frame {at}"
+        );
+        assert_eq!(audio.interleaved[(at - 1) * 2], 0.0, "silence just before");
+        assert!(
+            (audio.interleaved[(at + 2) * 2] - 0.5 * std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-3,
+            "second clip sample two frames later"
         );
     }
 

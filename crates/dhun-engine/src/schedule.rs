@@ -17,7 +17,6 @@ pub(crate) struct ScheduledEvent {
 /// Tempo/grid context derived from a (validated) project.
 pub(crate) struct Timing {
     map: TempoMap,
-    sample_rate: u32,
     ticks_per_step: u32,
 }
 
@@ -28,14 +27,8 @@ impl Timing {
         let tempo = Bpm::new(project.tempo).expect("tempo validated before Timing::new");
         Self {
             map: TempoMap::new(tempo, sample_rate),
-            sample_rate: sample_rate.get(),
             ticks_per_step: PPQ / project.steps_per_beat.max(1),
         }
-    }
-
-    /// The sample rate in hertz.
-    pub(crate) fn sample_rate(&self) -> u32 {
-        self.sample_rate
     }
 
     /// Converts a tick position to the nearest output frame.

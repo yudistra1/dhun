@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
-use dhun_engine::{render_offline, RenderRange, RenderedAudio};
-use dhun_io::Playback;
+use dhun_engine::{render_offline_with, AudioAssets, RenderRange, RenderedAudio};
+use dhun_io::{Playback, Recorder};
 use dhun_project::Project;
 
 #[derive(Parser)]
@@ -50,6 +50,15 @@ enum Command {
         #[arg(long = "loop")]
         looping: bool,
     },
+    /// Record the default audio input to a WAV file.
+    Record {
+        /// Output WAV path.
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Record for this many seconds; omit to record until you press Enter.
+        #[arg(long)]
+        seconds: Option<f32>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -62,6 +71,18 @@ fn main() -> Result<()> {
         Command::Info { project } => cmd_info(&project),
         Command::Validate { project } => cmd_validate(&project),
         Command::Play { project, looping } => cmd_play(&project, looping),
+        Command::Record { out, seconds } => cmd_record(&out, seconds),
+    }
+}
+
+/// The folder a project lives in (so relative clip paths resolve).
+fn project_dir(project_path: &Path) -> PathBuf {
+    if project_path.is_dir() {
+        project_path.to_path_buf()
+    } else {
+        project_path
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
     }
 }
 
@@ -70,7 +91,9 @@ fn cmd_render(project_path: &Path, out: &Path, range: Option<&str>) -> Result<()
         .with_context(|| format!("loading project {}", project_path.display()))?;
     let range = range.map(parse_range).transpose()?;
 
-    let audio = render_offline(&project, range).context("rendering project")?;
+    let assets = AudioAssets::load_from_dir(&project, &project_dir(project_path))
+        .context("loading audio clips")?;
+    let audio = render_offline_with(&project, range, &assets).context("rendering project")?;
     write_wav(out, &audio).with_context(|| format!("writing {}", out.display()))?;
 
     let seconds = audio.frames as f64 / f64::from(audio.sample_rate);
@@ -129,6 +152,44 @@ fn cmd_play(project_path: &Path, looping: bool) -> Result<()> {
         std::thread::sleep(Duration::from_millis(100));
     }
     println!("Done.");
+    Ok(())
+}
+
+fn cmd_record(out: &Path, seconds: Option<f32>) -> Result<()> {
+    let recorder = Recorder::start(out).context("opening audio input device")?;
+    println!(
+        "Recording @ {} Hz -> {}",
+        recorder.sample_rate(),
+        out.display()
+    );
+
+    if let Some(secs) = seconds {
+        println!("Capturing for {secs:.1}s...");
+        std::thread::sleep(Duration::from_secs_f32(secs.max(0.0)));
+    } else {
+        println!("Press Enter to stop...");
+        let mut line = String::new();
+        std::io::stdin()
+            .read_line(&mut line)
+            .context("reading from stdin")?;
+    }
+
+    let recording = recorder.stop().context("finalizing recording")?;
+    let duration = recording.frames as f64 / f64::from(recording.sample_rate.max(1));
+    println!(
+        "Recorded {} frames ({duration:.2}s, {} ch) -> {}",
+        recording.frames,
+        recording.channels,
+        recording.path.display()
+    );
+    println!(
+        "Add it to a project as an audio clip, e.g. {{ \"source\": \"{}\", \"start_tick\": 0 }}",
+        recording
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("take.wav")
+    );
     Ok(())
 }
 

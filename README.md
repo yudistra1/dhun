@@ -21,9 +21,11 @@
   (gain, 3-band EQ, compressor, reverb).
 - ▶️ **Real-time playback** — low-latency audio via [cpal]; **edits are heard live** as the loop
   plays. The audio callback is allocation-free (verified by a test).
+- 🎙️ **Audio recording** — capture a take from any input device to a WAV, place it on an audio
+  track, and hear it mixed in (trim + latency offset supported).
 - 💾 **Deterministic offline render** — bounce a project to a WAV from the GUI or the CLI; the
   render is bit-identical across runs.
-- 🖥️ **Headless CLI** — render / inspect / validate / play projects without the GUI.
+- 🖥️ **Headless CLI** — render / inspect / validate / play / record projects without the GUI.
 
 Milestones **M1–M6** are complete; audio recording (**M7**) and save/load/export polish (**M8**)
 are in progress. See [Status](#status).
@@ -65,9 +67,24 @@ cargo run -p dhun-cli -- render tests/fixtures/basic_beat -o out.wav
 # Print a summary, or validate a project file
 cargo run -p dhun-cli -- info     tests/fixtures/basic_beat
 cargo run -p dhun-cli -- validate tests/fixtures/basic_beat
+
+# Record a take from the default input device (Enter to stop, or --seconds N)
+cargo run -p dhun-cli -- record -o my-project/audio/take1.wav --seconds 8
 ```
 
-A project is a folder containing `project.json` (see [`tests/fixtures/basic_beat`](tests/fixtures/basic_beat)).
+A project is a folder containing `project.json` (see [`tests/fixtures/basic_beat`](tests/fixtures/basic_beat)),
+plus an `audio/` subfolder for recorded takes. Reference a take from an audio track:
+
+```json
+"audio_tracks": [
+  { "id": 10, "name": "Guitar",
+    "mixer": { "gain_db": 0.0, "pan": 0.0, "mute": false, "solo": false },
+    "clips": [ { "source": "audio/take1.wav", "start_tick": 0, "offset_frames": 0 } ] }
+]
+```
+
+`offset_frames` trims the start of the take — set it to your interface's input latency in frames
+to line the recording up with the beat.
 
 ## Standalone binaries
 
@@ -118,7 +135,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 | M4 Real-time playback (cpal) | ✅ |
 | M5 UI: transport, sequencer, mixer | ✅ |
 | M6 Piano roll | ✅ |
-| M7 Audio recording | 🚧 |
+| M7 Audio recording | 🚧 record + clip playback via CLI; in-app audio-track UI next |
 | M8 Save/load/export polish → v0.1 | ⬜ |
 
 ## License

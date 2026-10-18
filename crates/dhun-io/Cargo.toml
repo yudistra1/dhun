@@ -13,3 +13,4 @@ dhun-engine.workspace = true
 thiserror.workspace = true
 cpal.workspace = true
 rtrb.workspace = true
+hound.workspace = true

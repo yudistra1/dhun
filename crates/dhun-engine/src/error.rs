@@ -21,4 +21,13 @@ pub enum EngineError {
     /// A sample rate (e.g. from the audio device) that Dhun does not support.
     #[error("unsupported sample rate {0} Hz (supported: 44100, 48000)")]
     UnsupportedSampleRate(u32),
+
+    /// An audio clip file could not be read.
+    #[error("failed to load audio clip {path}: {reason}")]
+    ClipLoad {
+        /// The clip source path.
+        path: String,
+        /// Why it failed.
+        reason: String,
+    },
 }

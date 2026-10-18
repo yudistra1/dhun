@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod audio;
 pub mod error;
 pub mod player;
 pub mod render;
@@ -16,9 +17,10 @@ pub mod render;
 mod schedule;
 mod voice;
 
+pub use audio::{AudioAssets, ClipData};
 pub use error::EngineError;
 pub use player::{Program, RealtimeEngine};
-pub use render::{render_offline, RenderRange, RenderedAudio};
+pub use render::{render_offline, render_offline_with, RenderRange, RenderedAudio};
 
 // Re-exported so downstream crates (e.g. `dhun-io`) can name the engine's input
 // type without taking a direct dependency on `dhun-project` (SPEC §6).

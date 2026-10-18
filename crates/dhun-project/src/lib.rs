@@ -16,8 +16,8 @@ use std::path::Path;
 
 pub use error::ProjectError;
 pub use model::{
-    AdsrSpec, Channel, DrumKind, DrumLane, Instrument, Master, MixerStrip, Note, NoteLane, Pattern,
-    Project, Step, SynthSpec, WaveformSpec, CURRENT_FORMAT_VERSION,
+    AdsrSpec, AudioClip, AudioTrack, Channel, DrumKind, DrumLane, Instrument, Master, MixerStrip,
+    Note, NoteLane, Pattern, Project, Step, SynthSpec, WaveformSpec, CURRENT_FORMAT_VERSION,
 };
 
 impl Project {
@@ -165,6 +165,23 @@ impl Project {
             }
         }
 
+        for track in &self.audio_tracks {
+            if !ids.insert(track.id) {
+                return Err(ProjectError::Validation(format!(
+                    "duplicate track/channel id {}",
+                    track.id
+                )));
+            }
+            for clip in &track.clips {
+                if clip.source.trim().is_empty() {
+                    return Err(ProjectError::Validation(format!(
+                        "audio track {} has a clip with an empty source path",
+                        track.id
+                    )));
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -257,6 +274,18 @@ mod tests {
                 }],
             }],
             song: vec![10],
+            audio_tracks: vec![AudioTrack {
+                id: 100,
+                name: "Guitar".to_string(),
+                mixer: MixerStrip::default(),
+                clips: vec![AudioClip {
+                    source: "audio/take1.wav".to_string(),
+                    start_tick: 960,
+                    offset_frames: 128,
+                    length_frames: 0,
+                    gain_db: -1.5,
+                }],
+            }],
             ..Project::default()
         }
     }
@@ -318,5 +347,26 @@ mod tests {
         let mut p = sample_project();
         p.patterns[0].drum_lanes[0].channel = 2; // a synth channel
         assert!(p.validate().is_err(), "drum lane on synth channel");
+
+        let mut p = sample_project();
+        p.audio_tracks[0].clips[0].source = "  ".to_string();
+        assert!(p.validate().is_err(), "empty clip source");
+
+        let mut p = sample_project();
+        p.audio_tracks[0].id = 1; // collides with a channel id
+        assert!(p.validate().is_err(), "track id collides with channel id");
+    }
+
+    #[test]
+    fn old_project_without_audio_tracks_still_loads() {
+        // A pre-audio project.json has no `audio_tracks` field.
+        let json = r#"{
+            "format_version": 1, "name": "Legacy", "sample_rate": 48000,
+            "tempo": 120.0, "steps_per_beat": 4, "channels": [], "patterns": [],
+            "song": [], "master": { "gain_db": 0.0 }
+        }"#;
+        let p = Project::from_json(json).unwrap();
+        assert!(p.audio_tracks.is_empty());
+        p.validate().unwrap();
     }
 }
