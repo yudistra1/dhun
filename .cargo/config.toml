@@ -1,0 +1,6 @@
+# Cross-compilation to Windows (x86_64-pc-windows-gnu) from non-Windows hosts.
+# Requires the mingw-w64 toolchain (`brew install mingw-w64`) and the Rust target
+# (`rustup target add x86_64-pc-windows-gnu`). See docs/decisions.md.
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-ar"

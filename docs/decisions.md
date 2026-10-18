@@ -2,6 +2,18 @@
 
 Running log of non-obvious decisions, per CLAUDE.md. Newest first.
 
+## 2026-10-18 — Windows builds use the `x86_64-pc-windows-gnu` target (mingw), cross-compiled
+**Decision:** Windows `.exe` binaries are produced by cross-compiling to
+`x86_64-pc-windows-gnu` with a mingw-w64 linker, driven by
+`scripts/build-windows.sh`; the linker is pinned in `.cargo/config.toml`.
+**Reason:** the dev machine is macOS (Apple Silicon). The MSVC target
+(`...-windows-msvc`) needs the Windows SDK/linker, which isn't available on
+macOS; the GNU target links with mingw-w64 (`brew install mingw-w64`). cpal's
+WASAPI backend (via the `windows` crate) links cleanly under mingw, so no code
+changes were needed. Produces `dhun.exe` (CLI) and `dhun-app.exe` (a stub until
+M5). Requires `rustup` for the cross target, installed alongside the Homebrew
+toolchain (not replacing it); native builds still use Homebrew `cargo`.
+
 ## 2026-10-18 — `dhun-cli` depends on `dhun-io` for a `play` command
 **Decision:** added a `dhun play <project>` command, giving `dhun-cli` a
 dependency on `dhun-io`.

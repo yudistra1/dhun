@@ -42,5 +42,7 @@ In anything reachable from the audio callback:
 ## Commands
 - Build app: `cargo run -p dhun-app --release`
 - Render: `cargo run -p dhun-cli -- render tests/fixtures/basic_beat -o /tmp/out.wav`
+- Play: `cargo run -p dhun-cli -- play tests/fixtures/basic_beat`
 - Tests: `cargo test --workspace`
 - Benchmarks: `cargo test --workspace -- --ignored`
+- Windows .exe (cross-compile): `scripts/build-windows.sh` (see docs/decisions.md for prereqs)
