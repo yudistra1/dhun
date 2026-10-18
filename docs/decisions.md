@@ -2,6 +2,24 @@
 
 Running log of non-obvious decisions, per CLAUDE.md. Newest first.
 
+## 2026-10-18 — UI talks to the engine only via `UiCommand`s; app re-prepares on Play
+**Decision:** `dhun-ui` depends on `dhun-project` + `egui` only (SPEC §6) and
+edits a `Project` in place, returning `UiCommand`s from `draw`. `dhun-app` owns
+the `Playback` and, on `Play`, re-prepares a fresh `Playback` from the current
+project; edits therefore take effect on the next Play.
+**Reason:** honors the §6 rule that the UI reaches the engine only through
+messages, and keeps M5 simple. Live hot-swap of the schedule/mixer while playing
+(so edits are heard immediately) needs the engine to accept pattern/param
+updates over the `rtrb` queue — deferred to a later milestone.
+
+## 2026-10-18 — eframe with `default-features = false` + `glow`
+**Decision:** depend on `eframe` with default features off, enabling only
+`default_fonts` and `glow`.
+**Reason:** the glow (OpenGL) backend is the most portable across macOS/Linux/
+Windows; dropping defaults avoids pulling optional features (e.g. persistence,
+accesskit) the app does not use yet. CI installs the egui/eframe windowing dev
+packages (xcb, xkbcommon, GL) alongside ALSA so the Linux build links.
+
 ## 2026-10-18 — macOS ships a universal (arm64 + x86_64) binary
 **Decision:** `scripts/build-mac.sh` builds release binaries for both
 `aarch64-apple-darwin` and `x86_64-apple-darwin` and `lipo`-combines them into a

@@ -21,8 +21,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ALSA dev headers (cpal links libasound on Linux)
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Install Linux build deps (cpal/ALSA + egui/eframe windowing)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libgl1-mesa-dev
 
       - name: Install Rust (stable + rustfmt + clippy)
         uses: dtolnay/rust-toolchain@stable

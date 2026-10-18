@@ -5,13 +5,14 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+description = "Dhun desktop app: wires the UI to the engine and audio I/O."
 
 [[bin]]
 name = "dhun-app"
 path = "src/main.rs"
 
 [dependencies]
-dhun-core.workspace = true
 dhun-ui.workspace = true
-dhun-engine.workspace = true
 dhun-io.workspace = true
+dhun-engine.workspace = true
+eframe.workspace = true
