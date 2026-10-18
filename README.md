@@ -5,6 +5,11 @@
 [![CI](https://github.com/yudistra1/dhun/actions/workflows/ci.yml/badge.svg)](https://github.com/yudistra1/dhun/actions/workflows/ci.yml)
 &nbsp;License: MIT OR Apache-2.0
 
+### ▶ [Try it in your browser →](https://yudistra1.github.io/dhun/)
+
+No install needed — the full app runs as WebAssembly. Click **Play** to start audio
+(browsers require a click before sound), then tap steps and notes to build a beat.
+
 > Clean-room project: every built-in sound is synthesized by Dhun's own DSP — no third-party
 > samples, and no code, presets, or branding from any other DAW. See [`SPEC.md`](SPEC.md) for the
 > full product spec and [`docs/decisions.md`](docs/decisions.md) for the design log.
@@ -98,6 +103,21 @@ scripts/build-windows.sh   # x86_64 .exe → target/x86_64-pc-windows-gnu/releas
 Prereqs are documented at the top of each script (the Windows cross-build needs `mingw-w64`).
 On macOS, a downloaded (unsigned) binary is quarantined by Gatekeeper — clear it with
 `xattr -d com.apple.quarantine ./dhun` or right-click → Open once.
+
+## Run it on the web yourself
+
+The desktop app also compiles to WebAssembly. To build/serve locally you need
+[Trunk](https://trunkrs.dev) and the wasm target:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install trunk            # or: brew install trunk
+cd crates/dhun-app
+trunk serve                    # open http://127.0.0.1:8080
+```
+
+The hosted demo at [yudistra1.github.io/dhun](https://yudistra1.github.io/dhun/) is this
+same build. Recording is desktop-only (browsers can't capture devices the same way).
 
 ## Architecture
 
