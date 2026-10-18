@@ -255,6 +255,58 @@ pub enum EffectSpec {
     },
 }
 
+impl EffectSpec {
+    /// A default gain insert (0 dB).
+    #[must_use]
+    pub fn gain() -> Self {
+        EffectSpec::Gain { gain_db: 0.0 }
+    }
+
+    /// A default flat 3-band EQ.
+    #[must_use]
+    pub fn eq() -> Self {
+        EffectSpec::Eq {
+            low_db: 0.0,
+            mid_db: 0.0,
+            high_db: 0.0,
+        }
+    }
+
+    /// A default compressor (−18 dB, 4:1).
+    #[must_use]
+    pub fn compressor() -> Self {
+        EffectSpec::Compressor {
+            threshold_db: -18.0,
+            ratio: 4.0,
+            attack: 0.005,
+            release: 0.1,
+            makeup_db: 0.0,
+        }
+    }
+
+    /// A default reverb.
+    #[must_use]
+    pub fn reverb() -> Self {
+        EffectSpec::Reverb {
+            room_size: 0.5,
+            damping: 0.5,
+            wet: 0.3,
+            dry: 0.7,
+        }
+    }
+
+    /// A short label for the effect kind.
+    #[must_use]
+    pub fn label(&self) -> &'static str {
+        match self {
+            EffectSpec::Gain { .. } => "Gain",
+            EffectSpec::Eq { .. } => "EQ",
+            EffectSpec::Compressor { .. } => "Comp",
+            EffectSpec::Reverb { .. } => "Reverb",
+        }
+    }
+}
+
 /// A per-channel mixer strip (SPEC §3.5).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MixerStrip {

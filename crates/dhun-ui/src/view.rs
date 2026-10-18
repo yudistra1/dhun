@@ -3,7 +3,7 @@
 
 use egui::{Color32, RichText, Rounding, Sense, Stroke};
 
-use dhun_project::Instrument;
+use dhun_project::{EffectSpec, Instrument};
 
 use crate::command::UiCommand;
 use crate::model::{EditorState, Preset};
@@ -87,57 +87,182 @@ fn transport_bar(ctx: &egui::Context, state: &mut EditorState, commands: &mut Ve
 
 fn mixer_panel(ctx: &egui::Context, state: &mut EditorState, commands: &mut Vec<UiCommand>) {
     egui::SidePanel::right("mixer")
-        .default_width(240.0)
+        .default_width(250.0)
         .show(ctx, |ui| {
             ui.add_space(6.0);
             ui.label(RichText::new("MIXER").heading().color(theme::CYAN).strong());
             ui.add_space(6.0);
 
             let mut edited = false;
-            for (i, channel) in state.project.channels.iter_mut().enumerate() {
-                let accent = theme::channel_accent(i);
-                egui::Frame::none()
-                    .fill(theme::SURFACE)
-                    .rounding(Rounding::same(10.0))
-                    .inner_margin(egui::Margin::same(10.0))
-                    .stroke(Stroke::new(1.0_f32, theme::LINE))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            dot(ui, accent);
-                            ui.label(RichText::new(&channel.name).color(theme::TEXT).strong());
-                        });
-                        edited |= ui
-                            .add(
-                                egui::Slider::new(&mut channel.mixer.gain_db, -60.0..=6.0)
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for (i, channel) in state.project.channels.iter_mut().enumerate() {
+                        let accent = theme::channel_accent(i);
+                        egui::Frame::none()
+                            .fill(theme::SURFACE)
+                            .rounding(Rounding::same(10.0))
+                            .inner_margin(egui::Margin::same(10.0))
+                            .stroke(Stroke::new(1.0_f32, theme::LINE))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    dot(ui, accent);
+                                    ui.label(
+                                        RichText::new(&channel.name).color(theme::TEXT).strong(),
+                                    );
+                                });
+                                edited |= ui
+                                    .add(
+                                        egui::Slider::new(&mut channel.mixer.gain_db, -60.0..=6.0)
+                                            .text("dB")
+                                            .trailing_fill(true),
+                                    )
+                                    .changed();
+                                edited |= ui
+                                    .add(
+                                        egui::Slider::new(&mut channel.mixer.pan, -1.0..=1.0)
+                                            .text("pan"),
+                                    )
+                                    .changed();
+                                ui.horizontal(|ui| {
+                                    edited |=
+                                        ui.toggle_value(&mut channel.mixer.mute, "Mute").changed();
+                                    edited |=
+                                        ui.toggle_value(&mut channel.mixer.solo, "Solo").changed();
+                                });
+                                ui.push_id(("ch_fx", i), |ui| {
+                                    edited |= fx_rack(ui, &mut channel.mixer.effects, accent);
+                                });
+                            });
+                        ui.add_space(8.0);
+                    }
+
+                    egui::Frame::none()
+                        .fill(theme::SURFACE)
+                        .rounding(Rounding::same(10.0))
+                        .inner_margin(egui::Margin::same(10.0))
+                        .stroke(Stroke::new(1.0_f32, theme::LINE))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new("MASTER").color(theme::AMBER).strong());
+                            edited |= ui
+                                .add(
+                                    egui::Slider::new(
+                                        &mut state.project.master.gain_db,
+                                        -60.0..=6.0,
+                                    )
                                     .text("dB")
                                     .trailing_fill(true),
-                            )
-                            .changed();
-                        edited |= ui
-                            .add(egui::Slider::new(&mut channel.mixer.pan, -1.0..=1.0).text("pan"))
-                            .changed();
-                        ui.horizontal(|ui| {
-                            edited |= ui.toggle_value(&mut channel.mixer.mute, "Mute").changed();
-                            edited |= ui.toggle_value(&mut channel.mixer.solo, "Solo").changed();
+                                )
+                                .changed();
+                            ui.push_id("master_fx", |ui| {
+                                edited |=
+                                    fx_rack(ui, &mut state.project.master.effects, theme::AMBER);
+                            });
                         });
-                    });
-                ui.add_space(8.0);
-            }
-
-            ui.separator();
-            ui.label(RichText::new("MASTER").color(theme::AMBER).strong());
-            edited |= ui
-                .add(
-                    egui::Slider::new(&mut state.project.master.gain_db, -60.0..=6.0)
-                        .text("dB")
-                        .trailing_fill(true),
-                )
-                .changed();
+                    ui.add_space(8.0);
+                });
 
             if edited {
                 commands.push(UiCommand::ProjectEdited);
             }
         });
+}
+
+/// Renders an effect-insert rack for a chain: an add menu, each effect's params,
+/// and a remove button. Returns whether anything changed this frame.
+fn fx_rack(ui: &mut egui::Ui, effects: &mut Vec<EffectSpec>, accent: Color32) -> bool {
+    let mut edited = false;
+
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("FX").small().color(theme::TEXT_DIM));
+        ui.menu_button("+ add", |ui| {
+            for spec in [
+                EffectSpec::gain(),
+                EffectSpec::eq(),
+                EffectSpec::compressor(),
+                EffectSpec::reverb(),
+            ] {
+                if ui.button(spec.label()).clicked() {
+                    effects.push(spec);
+                    edited = true;
+                    ui.close_menu();
+                }
+            }
+        });
+    });
+
+    let mut remove = None;
+    for (i, fx) in effects.iter_mut().enumerate() {
+        ui.push_id(i, |ui| {
+            egui::Frame::none()
+                .fill(theme::BG)
+                .rounding(Rounding::same(6.0))
+                .inner_margin(egui::Margin::same(6.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        dot(ui, accent);
+                        ui.label(RichText::new(fx.label()).small().color(theme::TEXT));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("✕").on_hover_text("Remove").clicked() {
+                                remove = Some(i);
+                            }
+                        });
+                    });
+                    edited |= fx_params(ui, fx);
+                });
+        });
+        ui.add_space(4.0);
+    }
+    if let Some(i) = remove {
+        effects.remove(i);
+        edited = true;
+    }
+    edited
+}
+
+/// Parameter sliders for one effect. Returns whether a value changed.
+fn fx_params(ui: &mut egui::Ui, fx: &mut EffectSpec) -> bool {
+    let mut edited = false;
+    let mut slider = |ui: &mut egui::Ui, value: &mut f32, range, text: &str| {
+        edited |= ui.add(egui::Slider::new(value, range).text(text)).changed();
+    };
+    match fx {
+        EffectSpec::Gain { gain_db } => slider(ui, gain_db, -24.0..=24.0, "dB"),
+        EffectSpec::Eq {
+            low_db,
+            mid_db,
+            high_db,
+        } => {
+            slider(ui, low_db, -18.0..=18.0, "low");
+            slider(ui, mid_db, -18.0..=18.0, "mid");
+            slider(ui, high_db, -18.0..=18.0, "high");
+        }
+        EffectSpec::Compressor {
+            threshold_db,
+            ratio,
+            attack,
+            release,
+            makeup_db,
+        } => {
+            slider(ui, threshold_db, -60.0..=0.0, "thr");
+            slider(ui, ratio, 1.0..=20.0, "ratio");
+            slider(ui, attack, 0.0..=0.1, "atk");
+            slider(ui, release, 0.01..=1.0, "rel");
+            slider(ui, makeup_db, 0.0..=24.0, "gain");
+        }
+        EffectSpec::Reverb {
+            room_size,
+            damping,
+            wet,
+            dry,
+        } => {
+            slider(ui, room_size, 0.0..=1.0, "size");
+            slider(ui, damping, 0.0..=1.0, "damp");
+            slider(ui, wet, 0.0..=1.0, "wet");
+            slider(ui, dry, 0.0..=1.0, "dry");
+        }
+    }
+    edited
 }
 
 fn sequencer_panel(ctx: &egui::Context, state: &mut EditorState, commands: &mut Vec<UiCommand>) {

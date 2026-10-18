@@ -373,6 +373,15 @@ mod tests {
     }
 
     #[test]
+    fn effect_spec_constructors_and_labels() {
+        assert_eq!(EffectSpec::gain().label(), "Gain");
+        assert_eq!(EffectSpec::eq().label(), "EQ");
+        assert_eq!(EffectSpec::compressor().label(), "Comp");
+        assert_eq!(EffectSpec::reverb().label(), "Reverb");
+        assert!(matches!(EffectSpec::reverb(), EffectSpec::Reverb { .. }));
+    }
+
+    #[test]
     fn old_project_without_audio_tracks_still_loads() {
         // A pre-audio project.json has no `audio_tracks` field.
         let json = r#"{
