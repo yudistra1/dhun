@@ -45,4 +45,5 @@ In anything reachable from the audio callback:
 - Play: `cargo run -p dhun-cli -- play tests/fixtures/basic_beat`
 - Tests: `cargo test --workspace`
 - Benchmarks: `cargo test --workspace -- --ignored`
+- macOS universal binary (arm64 + x86_64): `scripts/build-mac.sh`
 - Windows .exe (cross-compile): `scripts/build-windows.sh` (see docs/decisions.md for prereqs)

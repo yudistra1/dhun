@@ -2,6 +2,15 @@
 
 Running log of non-obvious decisions, per CLAUDE.md. Newest first.
 
+## 2026-10-18 — macOS ships a universal (arm64 + x86_64) binary
+**Decision:** `scripts/build-mac.sh` builds release binaries for both
+`aarch64-apple-darwin` and `x86_64-apple-darwin` and `lipo`-combines them into a
+universal binary at `target/apple-universal/release/{dhun,dhun-app}`.
+**Reason:** one artifact runs on both Apple Silicon and Intel Macs. The x86_64
+slice cross-compiles cleanly on Apple Silicon against the system SDK (CoreAudio
+frameworks are universal), so no extra toolchain beyond the rustup target is
+needed. Verified at runtime on Apple Silicon (info/validate/render/play).
+
 ## 2026-10-18 — Windows builds use the `x86_64-pc-windows-gnu` target (mingw), cross-compiled
 **Decision:** Windows `.exe` binaries are produced by cross-compiling to
 `x86_64-pc-windows-gnu` with a mingw-w64 linker, driven by
