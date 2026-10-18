@@ -75,6 +75,13 @@ impl DhunApp {
                     pb.set_looping(on);
                 }
             }
+            UiCommand::ProjectEdited => {
+                // Push the live edit to any running session so it is heard as
+                // the loop plays (the engine swaps the program in place).
+                if let Some(pb) = self.playback.as_mut() {
+                    pb.update_program(&self.editor.project);
+                }
+            }
         }
     }
 }

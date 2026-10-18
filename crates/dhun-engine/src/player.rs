@@ -1,9 +1,14 @@
 //! The real-time playback engine (SPEC §3.1, §5).
 //!
-//! [`RealtimeEngine::prepare`] does all the allocation and scheduling up front;
+//! [`RealtimeEngine::prepare`] does all allocation and scheduling up front;
 //! [`RealtimeEngine::process`] runs on the audio thread and is strictly
-//! allocation-, lock-, and I/O-free (CLAUDE.md real-time rules, proven by the
-//! `no_alloc` guard test). Transport is controlled with `play`/`stop`/`rewind`.
+//! allocation-, lock-, and I/O-free (proven by the `no_alloc` guard test).
+//!
+//! Live editing: a fresh [`Program`] is built off the audio thread and handed
+//! in with [`RealtimeEngine::load_program`], which swaps it while keeping the
+//! playhead and ringing voices, and returns the old program for the caller to
+//! drop off-thread. So step, mixer, and tempo edits are heard as the loop
+//! plays, without ever allocating or freeing on the audio thread.
 
 use dhun_core::SampleRate;
 use dhun_dsp::db_to_lin;
@@ -14,77 +19,59 @@ use crate::render::{pan_gains, TAIL_SECONDS};
 use crate::schedule::{collect_channel_events, song_total_samples, Timing};
 use crate::voice::{build_voice, EventKind, Voice};
 
-/// One mixer strip: a voice plus its precomputed left/right gains.
-struct Strip {
-    voice: Voice,
-    lg: f32,
-    rg: f32,
-}
-
-/// A scheduled event tagged with the strip it drives.
+/// A scheduled event tagged with the voice (strip) it drives.
 struct ChanEvent {
     at: usize,
     strip: usize,
     kind: EventKind,
 }
 
-/// A prepared, real-time-safe player for one project.
-pub struct RealtimeEngine {
-    sample_rate: u32,
-    strips: Vec<Strip>,
+/// A swappable snapshot of what to play: the scheduled events plus per-voice and
+/// master mix. Built from a [`Project`] off the audio thread.
+///
+/// Voices live in the [`RealtimeEngine`] (they ring across edits); a `Program`
+/// carries only data that an edit can change, indexed to match the engine's
+/// voices by channel position.
+pub struct Program {
     events: Vec<ChanEvent>,
-    cursor: usize,
-    position: usize,
+    /// Effective (left, right) gain per channel, with mute/solo already applied.
+    gains: Vec<(f32, f32)>,
+    master: f32,
     song_frames: usize,
     total_frames: usize,
-    master_gain: f32,
-    playing: bool,
-    looping: bool,
 }
 
-impl RealtimeEngine {
-    /// Prepares a player for a project. Allocates and schedules everything here
-    /// so [`RealtimeEngine::process`] never needs to.
-    ///
-    /// `sample_rate` overrides the project's rate (e.g. with the audio device's
-    /// actual rate); `None` uses the project's.
+impl Program {
+    /// Builds a program from a project at the given sample rate. Allocates —
+    /// call off the audio thread.
     ///
     /// # Errors
-    /// Returns [`EngineError::Project`] if the project is invalid, or
-    /// [`EngineError::UnsupportedSampleRate`] if the override rate is not
+    /// Returns [`EngineError::UnsupportedSampleRate`] if the rate is not
     /// supported.
-    pub fn prepare(project: &Project, sample_rate: Option<u32>) -> Result<Self, EngineError> {
-        project.validate()?;
-
-        let sr = match sample_rate {
-            Some(s) => SampleRate::new(s).map_err(|_| EngineError::UnsupportedSampleRate(s))?,
-            None => SampleRate::new(project.sample_rate).expect("sample rate validated"),
-        };
+    pub fn build(project: &Project, sample_rate: u32) -> Result<Program, EngineError> {
+        let sr = SampleRate::new(sample_rate)
+            .map_err(|_| EngineError::UnsupportedSampleRate(sample_rate))?;
         let timing = Timing::new(project, sr);
         let song_frames = song_total_samples(project, &timing);
         let tail = (TAIL_SECONDS * f64::from(sr.get())) as usize;
         let total_frames = song_frames + tail;
 
         let any_solo = project.channels.iter().any(|c| c.mixer.solo);
-        let mut strips = Vec::new();
+        let mut gains = Vec::with_capacity(project.channels.len());
         let mut events = Vec::new();
 
-        for channel in &project.channels {
-            if channel.mixer.mute || (any_solo && !channel.mixer.solo) {
-                continue;
-            }
-            let strip = strips.len();
-            let (lg, rg) = pan_gains(channel.mixer.gain_db, channel.mixer.pan);
-            strips.push(Strip {
-                voice: build_voice(&channel.instrument, sr.get() as f32),
-                lg,
-                rg,
+        for (i, ch) in project.channels.iter().enumerate() {
+            let audible = !ch.mixer.mute && (!any_solo || ch.mixer.solo);
+            gains.push(if audible {
+                pan_gains(ch.mixer.gain_db, ch.mixer.pan)
+            } else {
+                (0.0, 0.0)
             });
-            for e in collect_channel_events(project, channel.id, &timing) {
+            for e in collect_channel_events(project, ch.id, &timing) {
                 if e.at < total_frames {
                     events.push(ChanEvent {
                         at: e.at,
-                        strip,
+                        strip: i,
                         kind: e.kind,
                     });
                 }
@@ -92,15 +79,63 @@ impl RealtimeEngine {
         }
         events.sort_by_key(|e| e.at);
 
-        Ok(Self {
-            sample_rate: sr.get(),
-            strips,
+        Ok(Program {
             events,
-            cursor: 0,
-            position: 0,
+            gains,
+            master: db_to_lin(project.master.gain_db),
             song_frames,
             total_frames,
-            master_gain: db_to_lin(project.master.gain_db),
+        })
+    }
+
+    /// Number of channels (voices) this program expects.
+    #[must_use]
+    pub fn channels(&self) -> usize {
+        self.gains.len()
+    }
+}
+
+/// A prepared, real-time-safe player for one project.
+pub struct RealtimeEngine {
+    sample_rate: u32,
+    voices: Vec<Voice>,
+    program: Box<Program>,
+    cursor: usize,
+    position: usize,
+    playing: bool,
+    looping: bool,
+}
+
+impl RealtimeEngine {
+    /// Prepares a player for a project. Allocates voices and the initial
+    /// program here so [`RealtimeEngine::process`] never needs to.
+    ///
+    /// `sample_rate` overrides the project's rate (e.g. the audio device's);
+    /// `None` uses the project's.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Project`] if the project is invalid, or
+    /// [`EngineError::UnsupportedSampleRate`] if the override rate is not
+    /// supported.
+    pub fn prepare(project: &Project, sample_rate: Option<u32>) -> Result<Self, EngineError> {
+        project.validate()?;
+        let sr = match sample_rate {
+            Some(s) => SampleRate::new(s).map_err(|_| EngineError::UnsupportedSampleRate(s))?,
+            None => SampleRate::new(project.sample_rate).expect("sample rate validated"),
+        };
+        let voices = project
+            .channels
+            .iter()
+            .map(|c| build_voice(&c.instrument, sr.get() as f32))
+            .collect();
+        let program = Box::new(Program::build(project, sr.get())?);
+
+        Ok(Self {
+            sample_rate: sr.get(),
+            voices,
+            program,
+            cursor: 0,
+            position: 0,
             playing: false,
             looping: false,
         })
@@ -112,10 +147,16 @@ impl RealtimeEngine {
         self.sample_rate
     }
 
-    /// Total frames in the render (song plus tail).
+    /// Number of channels (voices).
+    #[must_use]
+    pub fn channels(&self) -> usize {
+        self.voices.len()
+    }
+
+    /// Total frames in the current program (song plus tail).
     #[must_use]
     pub fn total_frames(&self) -> usize {
-        self.total_frames
+        self.program.total_frames
     }
 
     /// Whether the transport is running.
@@ -127,7 +168,7 @@ impl RealtimeEngine {
     /// Whether non-looping playback has reached the end.
     #[must_use]
     pub fn is_finished(&self) -> bool {
-        !self.looping && self.position >= self.total_frames
+        !self.looping && self.position >= self.program.total_frames
     }
 
     /// Starts (or resumes) playback from the current position.
@@ -151,15 +192,37 @@ impl RealtimeEngine {
         self.looping = looping;
     }
 
+    /// Swaps in a freshly built program, keeping the playhead and ringing
+    /// voices, and returns the previous program for the caller to drop off the
+    /// audio thread.
+    ///
+    /// If the new program's channel count does not match the engine's voices
+    /// (the channel set changed), it is rejected and handed straight back —
+    /// recreate the engine for structural changes.
+    ///
+    /// Allocation-free: a pointer swap plus a binary search for the cursor.
+    pub fn load_program(&mut self, new: Box<Program>) -> Box<Program> {
+        if new.channels() != self.voices.len() {
+            return new;
+        }
+        let old = std::mem::replace(&mut self.program, new);
+        self.cursor = self
+            .program
+            .events
+            .partition_point(|e| e.at < self.position);
+        self.position = self.position.min(self.program.total_frames);
+        old
+    }
+
     /// Fills an interleaved stereo output buffer. **Real-time safe**: no
     /// allocation, locks, or I/O.
     pub fn process(&mut self, out: &mut [f32]) {
-        let master = self.master_gain;
+        let master = self.program.master;
         for frame in out.chunks_exact_mut(2) {
             let limit = if self.looping {
-                self.song_frames
+                self.program.song_frames
             } else {
-                self.total_frames
+                self.program.total_frames
             };
             if self.playing && self.position >= limit {
                 if self.looping {
@@ -175,19 +238,24 @@ impl RealtimeEngine {
                 continue;
             }
 
-            while self.cursor < self.events.len() && self.events[self.cursor].at == self.position {
-                let kind = self.events[self.cursor].kind;
-                let strip = self.events[self.cursor].strip;
-                self.strips[strip].voice.apply(&kind);
+            while self.cursor < self.program.events.len()
+                && self.program.events[self.cursor].at == self.position
+            {
+                let (strip, kind) = {
+                    let ev = &self.program.events[self.cursor];
+                    (ev.strip, ev.kind)
+                };
+                self.voices[strip].apply(&kind);
                 self.cursor += 1;
             }
 
             let mut l = 0.0f32;
             let mut r = 0.0f32;
-            for s in &mut self.strips {
-                let v = s.voice.tick();
-                l += v * s.lg;
-                r += v * s.rg;
+            for (i, voice) in self.voices.iter_mut().enumerate() {
+                let v = voice.tick();
+                let (lg, rg) = self.program.gains[i];
+                l += v * lg;
+                r += v * rg;
             }
             frame[0] = l * master;
             frame[1] = r * master;
@@ -210,7 +278,6 @@ mod tests {
         let mut engine = RealtimeEngine::prepare(&project, None).unwrap();
         engine.play();
         let mut out = vec![0.0f32; engine.total_frames() * 2];
-        // Process in device-sized blocks to mimic a real callback.
         for block in out.chunks_mut(512 * 2) {
             engine.process(block);
         }
@@ -226,7 +293,7 @@ mod tests {
     fn stopped_engine_outputs_silence() {
         let mut engine = RealtimeEngine::prepare(&one_kick_project(), None).unwrap();
         let mut out = vec![1.0f32; 256 * 2];
-        engine.process(&mut out); // not playing yet
+        engine.process(&mut out);
         assert!(out.iter().all(|&s| s == 0.0));
     }
 
@@ -260,5 +327,81 @@ mod tests {
             err,
             Err(EngineError::UnsupportedSampleRate(96_000))
         ));
+    }
+
+    #[test]
+    fn live_mute_is_heard_immediately() {
+        let mut engine = RealtimeEngine::prepare(&one_kick_project(), None).unwrap();
+        engine.play();
+        let mut buf = vec![0.0f32; 512 * 2];
+        engine.process(&mut buf);
+        assert!(
+            buf.iter().any(|&s| s != 0.0),
+            "kick should be audible first"
+        );
+
+        // Mute the channel live.
+        let mut muted = one_kick_project();
+        muted.channels[0].mixer.mute = true;
+        let program = Program::build(&muted, engine.sample_rate()).unwrap();
+        let _old = engine.load_program(Box::new(program));
+
+        let mut buf2 = vec![0.0f32; 512 * 2];
+        engine.process(&mut buf2);
+        assert!(
+            buf2.iter().all(|&s| s == 0.0),
+            "muting should silence output on the next block"
+        );
+    }
+
+    #[test]
+    fn live_step_edit_is_heard_on_next_loop() {
+        // Start from an empty, looping pattern — pure silence.
+        let mut empty = one_kick_project();
+        empty.patterns[0].drum_lanes[0].steps[0].on = false;
+        let mut engine = RealtimeEngine::prepare(&empty, None).unwrap();
+        engine.set_looping(true);
+        engine.play();
+
+        let mut before = vec![0.0f32; 6_000 * 2];
+        engine.process(&mut before);
+        assert!(
+            before.iter().all(|&s| s == 0.0),
+            "empty pattern should be silent"
+        );
+
+        // Live-add a kick on step 1 (the project's step 0 is on).
+        let program = Program::build(&one_kick_project(), engine.sample_rate()).unwrap();
+        let _old = engine.load_program(Box::new(program));
+
+        // Play past the loop boundary (1 bar beat = 24_000 frames @ 120/48k);
+        // the newly added hit must fire when the loop wraps to step 0.
+        let mut after = vec![0.0f32; 30_000 * 2];
+        engine.process(&mut after);
+        assert!(
+            after.iter().any(|&s| s != 0.0),
+            "a step added live should be heard on the next loop pass"
+        );
+    }
+
+    #[test]
+    fn load_program_rejects_mismatched_channel_count() {
+        let mut engine = RealtimeEngine::prepare(&one_kick_project(), None).unwrap();
+        assert_eq!(engine.channels(), 1);
+
+        // A two-channel project's program must not be applied to a 1-voice engine.
+        let mut two = one_kick_project();
+        let mut extra = two.channels[0].clone();
+        extra.id = 2;
+        two.channels.push(extra);
+        let steps = two.patterns[0].drum_lanes[0].steps.clone();
+        two.patterns[0]
+            .drum_lanes
+            .push(dhun_project::DrumLane { channel: 2, steps });
+
+        let program = Program::build(&two, engine.sample_rate()).unwrap();
+        let rejected = engine.load_program(Box::new(program));
+        assert_eq!(rejected.channels(), 2, "mismatched program handed back");
+        assert_eq!(engine.channels(), 1, "engine unchanged");
     }
 }

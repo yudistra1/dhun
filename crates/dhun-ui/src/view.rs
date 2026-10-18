@@ -18,8 +18,8 @@ pub fn draw(ctx: &egui::Context, state: &mut EditorState) -> Vec<UiCommand> {
     let mut commands = Vec::new();
 
     transport_bar(ctx, state, &mut commands);
-    mixer_panel(ctx, state);
-    sequencer_panel(ctx, state);
+    mixer_panel(ctx, state, &mut commands);
+    sequencer_panel(ctx, state, &mut commands);
 
     commands
 }
@@ -70,16 +70,21 @@ fn transport_bar(ctx: &egui::Context, state: &mut EditorState, commands: &mut Ve
 
                 neon_separator(ui);
                 ui.label(RichText::new("TEMPO").small().color(theme::TEXT_DIM));
-                ui.add(
-                    egui::Slider::new(&mut state.project.tempo, 40.0..=240.0)
-                        .suffix(" BPM")
-                        .trailing_fill(true),
-                );
+                if ui
+                    .add(
+                        egui::Slider::new(&mut state.project.tempo, 40.0..=240.0)
+                            .suffix(" BPM")
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                {
+                    commands.push(UiCommand::ProjectEdited);
+                }
             });
         });
 }
 
-fn mixer_panel(ctx: &egui::Context, state: &mut EditorState) {
+fn mixer_panel(ctx: &egui::Context, state: &mut EditorState, commands: &mut Vec<UiCommand>) {
     egui::SidePanel::right("mixer")
         .default_width(240.0)
         .show(ctx, |ui| {
@@ -87,6 +92,7 @@ fn mixer_panel(ctx: &egui::Context, state: &mut EditorState) {
             ui.label(RichText::new("MIXER").heading().color(theme::CYAN).strong());
             ui.add_space(6.0);
 
+            let mut edited = false;
             for (i, channel) in state.project.channels.iter_mut().enumerate() {
                 let accent = theme::channel_accent(i);
                 egui::Frame::none()
@@ -99,15 +105,19 @@ fn mixer_panel(ctx: &egui::Context, state: &mut EditorState) {
                             dot(ui, accent);
                             ui.label(RichText::new(&channel.name).color(theme::TEXT).strong());
                         });
-                        ui.add(
-                            egui::Slider::new(&mut channel.mixer.gain_db, -60.0..=6.0)
-                                .text("dB")
-                                .trailing_fill(true),
-                        );
-                        ui.add(egui::Slider::new(&mut channel.mixer.pan, -1.0..=1.0).text("pan"));
+                        edited |= ui
+                            .add(
+                                egui::Slider::new(&mut channel.mixer.gain_db, -60.0..=6.0)
+                                    .text("dB")
+                                    .trailing_fill(true),
+                            )
+                            .changed();
+                        edited |= ui
+                            .add(egui::Slider::new(&mut channel.mixer.pan, -1.0..=1.0).text("pan"))
+                            .changed();
                         ui.horizontal(|ui| {
-                            ui.toggle_value(&mut channel.mixer.mute, "Mute");
-                            ui.toggle_value(&mut channel.mixer.solo, "Solo");
+                            edited |= ui.toggle_value(&mut channel.mixer.mute, "Mute").changed();
+                            edited |= ui.toggle_value(&mut channel.mixer.solo, "Solo").changed();
                         });
                     });
                 ui.add_space(8.0);
@@ -115,15 +125,21 @@ fn mixer_panel(ctx: &egui::Context, state: &mut EditorState) {
 
             ui.separator();
             ui.label(RichText::new("MASTER").color(theme::AMBER).strong());
-            ui.add(
-                egui::Slider::new(&mut state.project.master.gain_db, -60.0..=6.0)
-                    .text("dB")
-                    .trailing_fill(true),
-            );
+            edited |= ui
+                .add(
+                    egui::Slider::new(&mut state.project.master.gain_db, -60.0..=6.0)
+                        .text("dB")
+                        .trailing_fill(true),
+                )
+                .changed();
+
+            if edited {
+                commands.push(UiCommand::ProjectEdited);
+            }
         });
 }
 
-fn sequencer_panel(ctx: &egui::Context, state: &mut EditorState) {
+fn sequencer_panel(ctx: &egui::Context, state: &mut EditorState, commands: &mut Vec<UiCommand>) {
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.add_space(4.0);
         ui.label(
@@ -145,6 +161,7 @@ fn sequencer_panel(ctx: &egui::Context, state: &mut EditorState) {
                     .clicked()
                 {
                     state.apply_preset(preset);
+                    commands.push(UiCommand::ProjectEdited);
                 }
             }
         });
@@ -201,6 +218,7 @@ fn sequencer_panel(ctx: &egui::Context, state: &mut EditorState) {
                         .clicked()
                     {
                         state.toggle_step(*id, step);
+                        commands.push(UiCommand::ProjectEdited);
                     }
                 }
             });

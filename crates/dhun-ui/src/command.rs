@@ -14,4 +14,7 @@ pub enum UiCommand {
     Rewind,
     /// Enable or disable looping.
     SetLooping(bool),
+    /// The project was edited this frame (step, mixer, tempo, preset); the host
+    /// should push the change to any live playback.
+    ProjectEdited,
 }

@@ -17,7 +17,7 @@ mod schedule;
 mod voice;
 
 pub use error::EngineError;
-pub use player::RealtimeEngine;
+pub use player::{Program, RealtimeEngine};
 pub use render::{render_offline, RenderRange, RenderedAudio};
 
 // Re-exported so downstream crates (e.g. `dhun-io`) can name the engine's input

@@ -2,6 +2,22 @@
 
 Running log of non-obvious decisions, per CLAUDE.md. Newest first.
 
+## 2026-10-18 — Live edits via off-thread program rebuild + lock-free swap
+**Decision:** editing while playing rebuilds a `Program` (events + per-channel and
+master mix) off the audio thread; it is sent over an `rtrb` queue and swapped in
+by `RealtimeEngine::load_program`, which keeps the playhead and ringing voices
+and hands the old program back over a recycle queue to be dropped on the main
+thread. The UI emits a coalesced `UiCommand::ProjectEdited` on any step/mixer/
+tempo/preset change; the app forwards it as `Playback::update_program`.
+**Reason:** step/mixer/tempo edits must be heard as the loop plays, but the audio
+callback may not allocate, lock, or free (CLAUDE.md). Rebuilding whole programs
+off-thread and swapping a `Box` pointer keeps the callback to a pointer swap plus
+a binary-search cursor recompute. Voices persist across swaps, so edits do not
+click. A changed channel *count* is rejected by `load_program` (handed back) —
+structural changes recreate the session instead. Verified by engine tests
+(`live_mute_is_heard_immediately`, `live_step_edit_is_heard_on_next_loop`) and
+the no-alloc guard still holds on `process`.
+
 ## 2026-10-18 — Bundle Orbitron (OFL-1.1) as the display font
 **Decision:** vendor the Orbitron variable font at
 `crates/dhun-ui/assets/fonts/Orbitron-Variable.ttf` (with its `OFL.txt`) and use

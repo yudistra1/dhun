@@ -2,9 +2,14 @@
 //!
 //! [`Playback`] opens the default output device and drives a
 //! [`dhun_engine::RealtimeEngine`] from the audio callback. Transport commands
-//! cross to the audio thread over an `rtrb` lock-free ring buffer, so the main
-//! thread never blocks the callback and the callback never locks (CLAUDE.md
-//! real-time rules).
+//! and live program updates cross to the audio thread over `rtrb` lock-free
+//! ring buffers, so the main thread never blocks the callback and the callback
+//! never locks or allocates (CLAUDE.md real-time rules).
+//!
+//! Live edits: [`Playback::update_program`] builds a fresh program off-thread
+//! and sends it in; the audio thread swaps it and returns the old one over a
+//! recycle queue, which the main thread drains and drops — nothing is freed on
+//! the audio thread.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -14,7 +19,7 @@ use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample, StreamConfig};
-use dhun_engine::{Project, RealtimeEngine};
+use dhun_engine::{Program, Project, RealtimeEngine};
 use rtrb::{Consumer, Producer, RingBuffer};
 use thiserror::Error;
 
@@ -59,10 +64,17 @@ pub enum Command {
     SetLooping(bool),
 }
 
-/// A live audio-output session: owns the device stream and the command channel.
+/// Internal audio-thread message: a transport command or a new program to swap.
+enum Msg {
+    Transport(Command),
+    Load(Box<Program>),
+}
+
+/// A live audio-output session: owns the device stream and the message channels.
 pub struct Playback {
     _stream: cpal::Stream,
-    commands: Producer<Command>,
+    messages: Producer<Msg>,
+    recycle: Consumer<Box<Program>>,
     finished: Arc<AtomicBool>,
     sample_rate: u32,
 }
@@ -88,26 +100,43 @@ impl Playback {
         let config: StreamConfig = supported.config();
 
         let engine = RealtimeEngine::prepare(project, Some(sample_rate))?;
-        let (producer, consumer) = RingBuffer::<Command>::new(64);
+        let (msg_tx, msg_rx) = RingBuffer::<Msg>::new(64);
+        let (recycle_tx, recycle_rx) = RingBuffer::<Box<Program>>::new(16);
         let finished = Arc::new(AtomicBool::new(false));
 
         let stream = match sample_format {
-            cpal::SampleFormat::F32 => {
-                build_stream::<f32>(&device, &config, engine, consumer, Arc::clone(&finished))?
-            }
-            cpal::SampleFormat::I16 => {
-                build_stream::<i16>(&device, &config, engine, consumer, Arc::clone(&finished))?
-            }
-            cpal::SampleFormat::U16 => {
-                build_stream::<u16>(&device, &config, engine, consumer, Arc::clone(&finished))?
-            }
+            cpal::SampleFormat::F32 => build_stream::<f32>(
+                &device,
+                &config,
+                engine,
+                msg_rx,
+                recycle_tx,
+                Arc::clone(&finished),
+            )?,
+            cpal::SampleFormat::I16 => build_stream::<i16>(
+                &device,
+                &config,
+                engine,
+                msg_rx,
+                recycle_tx,
+                Arc::clone(&finished),
+            )?,
+            cpal::SampleFormat::U16 => build_stream::<u16>(
+                &device,
+                &config,
+                engine,
+                msg_rx,
+                recycle_tx,
+                Arc::clone(&finished),
+            )?,
             other => return Err(IoError::UnsupportedFormat(other)),
         };
         stream.play()?;
 
         Ok(Self {
             _stream: stream,
-            commands: producer,
+            messages: msg_tx,
+            recycle: recycle_rx,
             finished,
             sample_rate,
         })
@@ -145,10 +174,24 @@ impl Playback {
         self.send(Command::SetLooping(looping));
     }
 
-    /// Queues a command for the audio thread (dropped if the queue is full,
-    /// which only happens under pathological command spam).
+    /// Rebuilds the playback program from the current project state and swaps it
+    /// in live, so step/mixer/tempo edits are heard as the loop plays.
+    ///
+    /// Building (and dropping the previous program) happens here on the calling
+    /// thread, never on the audio thread. Does nothing if the project cannot be
+    /// built into a program (keeps the last good one).
+    pub fn update_program(&mut self, project: &Project) {
+        // Reclaim and drop any program the audio thread handed back.
+        while self.recycle.pop().is_ok() {}
+        if let Ok(program) = Program::build(project, self.sample_rate) {
+            let _ = self.messages.push(Msg::Load(Box::new(program)));
+        }
+    }
+
+    /// Queues a transport command for the audio thread (dropped if the queue is
+    /// full, which only happens under pathological command spam).
     fn send(&mut self, command: Command) {
-        let _ = self.commands.push(command);
+        let _ = self.messages.push(Msg::Transport(command));
     }
 }
 
@@ -157,7 +200,8 @@ fn build_stream<T>(
     device: &cpal::Device,
     config: &StreamConfig,
     mut engine: RealtimeEngine,
-    mut commands: Consumer<Command>,
+    mut messages: Consumer<Msg>,
+    mut recycle: Producer<Box<Program>>,
     finished: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, IoError>
 where
@@ -167,9 +211,18 @@ where
     let stream = device.build_output_stream(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-            // Drain transport commands (lock-free, allocation-free).
-            while let Ok(command) = commands.pop() {
-                apply(&mut engine, command);
+            // Drain messages (lock-free, allocation-free).
+            while let Ok(msg) = messages.pop() {
+                match msg {
+                    Msg::Transport(command) => apply(&mut engine, command),
+                    Msg::Load(program) => {
+                        let old = engine.load_program(program);
+                        // Hand the old program back to be dropped off-thread.
+                        // The recycle queue is sized so this effectively never
+                        // fails; if it ever did, the box would drop here.
+                        let _ = recycle.push(old);
+                    }
+                }
             }
             // Render one stereo frame at a time into whatever channel layout
             // the device uses. `frame` lives on the stack — no allocation.
