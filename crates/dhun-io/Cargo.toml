@@ -5,7 +5,11 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+description = "Dhun real-time audio device I/O (cpal) and transport messaging."
 
 [dependencies]
 dhun-core.workspace = true
 dhun-engine.workspace = true
+thiserror.workspace = true
+cpal.workspace = true
+rtrb.workspace = true

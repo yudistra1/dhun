@@ -2,6 +2,37 @@
 
 Running log of non-obvious decisions, per CLAUDE.md. Newest first.
 
+## 2026-10-18 — `dhun-cli` depends on `dhun-io` for a `play` command
+**Decision:** added a `dhun play <project>` command, giving `dhun-cli` a
+dependency on `dhun-io`.
+**Reason:** SPEC §6 lists the CLI's deps as engine+project, but §3.7 says every
+engine feature should be reachable from the CLI, and real-time playback is
+otherwise unhearable until the GUI (M5). The edge is downward/sideways
+(cli → io → engine), introduces no cycle, and does not violate the "no upward
+dependency" rule. It lets M4's "plays a project" be verified by ear now.
+
+## 2026-10-18 — `dhun-engine` re-exports `Project`; `dhun-io` depends on core+engine only
+**Decision:** `dhun-engine` re-exports `dhun_project::Project`; `dhun-io` names it
+as `dhun_engine::Project` rather than depending on `dhun-project` directly.
+**Reason:** keeps `dhun-io`'s direct dependencies to exactly core+engine as listed
+in SPEC §6, while still letting it call `RealtimeEngine::prepare`, whose input is
+a `Project`.
+
+## 2026-10-18 — Audio callback renders one stereo frame at a time
+**Decision:** `dhun-io`'s cpal callback calls `RealtimeEngine::process` with a
+2-sample stack buffer per device frame, then fans the stereo pair out to the
+device's channel layout and sample format (f32/i16/u16).
+**Reason:** handles any channel count and format without a per-callback heap
+buffer, so the callback stays allocation-free (the no-alloc guard covers
+`process` itself). The engine is prepared at the device's actual sample rate so
+pitch/time are correct on the hardware.
+
+## 2026-10-18 — CI installs `libasound2-dev`
+**Decision:** the CI workflow runs `apt-get install -y libasound2-dev` before
+building.
+**Reason:** `cpal` links ALSA on Linux; without the dev headers the `dhun-io`
+build (and thus the whole workspace) fails to compile on the CI runner.
+
 ## 2026-10-18 — Project format mirrors DSP param types instead of depending on `dhun-dsp`
 **Decision:** `dhun-project` defines its own serializable `DrumKind`, `WaveformSpec`,
 `SynthSpec`, and `AdsrSpec`; `dhun-engine` translates these into the matching

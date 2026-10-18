@@ -17,4 +17,8 @@ pub enum EngineError {
         /// Requested end bar.
         end: u32,
     },
+
+    /// A sample rate (e.g. from the audio device) that Dhun does not support.
+    #[error("unsupported sample rate {0} Hz (supported: 44100, 48000)")]
+    UnsupportedSampleRate(u32),
 }

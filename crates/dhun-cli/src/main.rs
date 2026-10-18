@@ -4,10 +4,12 @@
 //! GUI. v0.1 exposes `render`, `info`, and `validate`.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use dhun_engine::{render_offline, RenderRange, RenderedAudio};
+use dhun_io::Playback;
 use dhun_project::Project;
 
 #[derive(Parser)]
@@ -40,6 +42,14 @@ enum Command {
         /// Project folder or `project.json` path.
         project: PathBuf,
     },
+    /// Play a project out the default audio device in real time.
+    Play {
+        /// Project folder or `project.json` path.
+        project: PathBuf,
+        /// Loop the song until interrupted.
+        #[arg(long = "loop")]
+        looping: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -51,6 +61,7 @@ fn main() -> Result<()> {
         } => cmd_render(&project, &out, range.as_deref()),
         Command::Info { project } => cmd_info(&project),
         Command::Validate { project } => cmd_validate(&project),
+        Command::Play { project, looping } => cmd_play(&project, looping),
     }
 }
 
@@ -93,6 +104,32 @@ fn cmd_validate(project_path: &Path) -> Result<()> {
         }
         Err(e) => bail!("invalid project {}: {e}", project_path.display()),
     }
+}
+
+fn cmd_play(project_path: &Path, looping: bool) -> Result<()> {
+    let project = Project::load(project_path)
+        .with_context(|| format!("loading project {}", project_path.display()))?;
+    let mut playback = Playback::start(&project).context("opening audio output device")?;
+
+    println!(
+        "Playing \"{}\" @ {} Hz{}. Press Ctrl-C to stop.",
+        project.name,
+        playback.sample_rate(),
+        if looping { " (looping)" } else { "" }
+    );
+    playback.set_looping(looping);
+    playback.play();
+
+    if looping {
+        loop {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+    while !playback.is_finished() {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    println!("Done.");
+    Ok(())
 }
 
 /// Parses a `start:end` bar range.
