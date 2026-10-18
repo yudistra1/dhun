@@ -208,8 +208,55 @@ impl Default for AdsrSpec {
     }
 }
 
+/// A built-in insert effect and its parameters (SPEC §3.5).
+///
+/// Mirrors the `dhun-dsp` effect params (the project layer does not depend on
+/// `dhun-dsp`); `dhun-engine` translates these into DSP processors.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "effect", rename_all = "snake_case")]
+pub enum EffectSpec {
+    /// A gain stage, in decibels.
+    Gain {
+        /// Gain in dB.
+        gain_db: f32,
+    },
+    /// A 3-band EQ (low shelf, mid peak, high shelf); gains in dB.
+    Eq {
+        /// Low-shelf gain in dB.
+        low_db: f32,
+        /// Mid peak gain in dB.
+        mid_db: f32,
+        /// High-shelf gain in dB.
+        high_db: f32,
+    },
+    /// A feed-forward compressor.
+    Compressor {
+        /// Threshold in dBFS.
+        threshold_db: f32,
+        /// Ratio (>= 1).
+        ratio: f32,
+        /// Attack time in seconds.
+        attack: f32,
+        /// Release time in seconds.
+        release: f32,
+        /// Make-up gain in dB.
+        makeup_db: f32,
+    },
+    /// A reverb. `room_size`, `damping`, `wet`, `dry` are in `[0, 1]`.
+    Reverb {
+        /// Room size.
+        room_size: f32,
+        /// High-frequency damping.
+        damping: f32,
+        /// Wet (processed) level.
+        wet: f32,
+        /// Dry (unprocessed) level.
+        dry: f32,
+    },
+}
+
 /// A per-channel mixer strip (SPEC §3.5).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MixerStrip {
     /// Volume in decibels.
     pub gain_db: f32,
@@ -219,6 +266,9 @@ pub struct MixerStrip {
     pub mute: bool,
     /// Soloed if true.
     pub solo: bool,
+    /// Insert effect chain, applied in order to the (mono) channel signal.
+    #[serde(default)]
+    pub effects: Vec<EffectSpec>,
 }
 
 impl Default for MixerStrip {
@@ -228,20 +278,27 @@ impl Default for MixerStrip {
             pan: 0.0,
             mute: false,
             solo: false,
+            effects: Vec::new(),
         }
     }
 }
 
 /// The master channel (SPEC §3.5).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Master {
     /// Master volume in decibels.
     pub gain_db: f32,
+    /// Insert effect chain, applied (per side) to the stereo master bus.
+    #[serde(default)]
+    pub effects: Vec<EffectSpec>,
 }
 
 impl Default for Master {
     fn default() -> Self {
-        Self { gain_db: 0.0 }
+        Self {
+            gain_db: 0.0,
+            effects: Vec::new(),
+        }
     }
 }
 

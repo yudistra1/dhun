@@ -18,6 +18,7 @@ use dhun_project::Project;
 
 use crate::audio::{AudioAssets, ClipData};
 use crate::error::EngineError;
+use crate::inserts::{build_chain, Insert};
 use crate::render::{pan_gains, TAIL_SECONDS};
 use crate::schedule::{collect_channel_events, song_total_samples, Timing};
 use crate::voice::{build_voice, EventKind, Voice};
@@ -53,7 +54,12 @@ pub struct Program {
     events: Vec<ChanEvent>,
     /// Effective (left, right) gain per channel, with mute/solo already applied.
     gains: Vec<(f32, f32)>,
+    /// Per-channel insert chains, aligned with `gains` / the engine's voices.
+    channel_inserts: Vec<Vec<Insert>>,
     audio: Vec<AudioPlayback>,
+    /// Master insert chains, one per stereo side.
+    master_l: Vec<Insert>,
+    master_r: Vec<Insert>,
     master: f32,
     song_frames: usize,
     total_frames: usize,
@@ -92,7 +98,9 @@ impl Program {
         let any_solo = project.channels.iter().any(|c| c.mixer.solo)
             || project.audio_tracks.iter().any(|t| t.mixer.solo);
 
+        let sr_f = sr.get() as f32;
         let mut gains = Vec::with_capacity(project.channels.len());
+        let mut channel_inserts = Vec::with_capacity(project.channels.len());
         let mut events = Vec::new();
 
         for (i, ch) in project.channels.iter().enumerate() {
@@ -102,6 +110,7 @@ impl Program {
             } else {
                 (0.0, 0.0)
             });
+            channel_inserts.push(build_chain(&ch.mixer.effects, sr_f));
             for e in collect_channel_events(project, ch.id, &timing) {
                 if e.at < total_frames {
                     events.push(ChanEvent {
@@ -152,7 +161,10 @@ impl Program {
         Ok(Program {
             events,
             gains,
+            channel_inserts,
             audio,
+            master_l: build_chain(&project.master.effects, sr_f),
+            master_r: build_chain(&project.master.effects, sr_f),
             master: db_to_lin(project.master.gain_db),
             song_frames,
             total_frames,
@@ -336,7 +348,11 @@ impl RealtimeEngine {
             let mut l = 0.0f32;
             let mut r = 0.0f32;
             for (i, voice) in self.voices.iter_mut().enumerate() {
-                let v = voice.tick();
+                // Voice -> channel insert chain (mono) -> pan/gain.
+                let mut v = voice.tick();
+                for insert in &mut self.program.channel_inserts[i] {
+                    v = insert.tick(v);
+                }
                 let (lg, rg) = self.program.gains[i];
                 l += v * lg;
                 r += v * rg;
@@ -348,6 +364,13 @@ impl RealtimeEngine {
                     l += sl * clip.lg;
                     r += sr * clip.rg;
                 }
+            }
+            // Master insert chains (per side), then the master fader.
+            for insert in &mut self.program.master_l {
+                l = insert.tick(l);
+            }
+            for insert in &mut self.program.master_r {
+                r = insert.tick(r);
             }
             frame[0] = l * master;
             frame[1] = r * master;
@@ -515,6 +538,38 @@ mod tests {
             (audio.interleaved[(at + 2) * 2] - 0.5 * std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-3,
             "second clip sample two frames later"
         );
+    }
+
+    #[test]
+    fn channel_insert_gain_is_applied() {
+        use crate::render::render_offline;
+        use dhun_project::EffectSpec;
+
+        let base = render_offline(&one_kick_project(), None).unwrap();
+        let base_peak = base.interleaved.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(base_peak > 0.05, "baseline kick audible");
+
+        // A -120 dB gain insert on the kick channel should silence it.
+        let mut p = one_kick_project();
+        p.channels[0].mixer.effects = vec![EffectSpec::Gain { gain_db: -120.0 }];
+        let cut = render_offline(&p, None).unwrap();
+        let cut_peak = cut.interleaved.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(
+            cut_peak < base_peak * 0.01,
+            "channel insert not applied: {cut_peak} vs {base_peak}"
+        );
+    }
+
+    #[test]
+    fn master_insert_gain_is_applied() {
+        use crate::render::render_offline;
+        use dhun_project::EffectSpec;
+
+        let mut p = one_kick_project();
+        p.master.effects = vec![EffectSpec::Gain { gain_db: -120.0 }];
+        let out = render_offline(&p, None).unwrap();
+        let peak = out.interleaved.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(peak < 1e-3, "master insert should silence output: {peak}");
     }
 
     #[test]

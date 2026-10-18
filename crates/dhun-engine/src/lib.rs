@@ -14,6 +14,7 @@ pub mod error;
 pub mod player;
 pub mod render;
 
+mod inserts;
 mod schedule;
 mod voice;
 

@@ -2,6 +2,27 @@
 
 Running log of non-obvious decisions, per CLAUDE.md. Newest first.
 
+## 2026-10-18 — Insert effects wired into the mix path
+**Decision:** `MixerStrip` and `Master` gain a `#[serde(default)] effects:
+Vec<EffectSpec>`; the engine builds each spec into a `dhun-dsp` processor
+(`inserts::Insert` enum) and runs them in `process`. Channel inserts process the
+**mono** channel signal before pan/gain; master inserts run **per stereo side**
+(two independent chains) before the master fader.
+**Reason:** the DSP effects (gain/EQ/compressor/reverb) existed since M2 but were
+never in the signal path — a song couldn't actually be EQ'd or reverbed. Mono
+channel inserts fit our mono voices; duplicating the master chain per side gives
+a stereo master bus without a stereo-effect rewrite.
+**Consequences / deferred:**
+- Effect chains live in `Program`, which is rebuilt on each live edit, so moving
+  an effect knob while playing **resets that effect's state** (brief glitch;
+  acceptable for v0.1).
+- Reverb allocates its delay lines at build (off-thread); `process` only indexes
+  them, so the **no-alloc guard still holds** (it now runs a reverb under the
+  guard to prove it).
+- **Audio-track** inserts and an **in-app effects rack UI** are deferred — effects
+  are set via `project.json` for now; the mixer UI still shows only
+  gain/pan/mute/solo. Old projects load unchanged (`#[serde(default)]`).
+
 ## 2026-10-18 — Web build: egui→WASM with cpal's WebAudio backend
 **Decision:** `dhun-app` builds to `wasm32-unknown-unknown` (via Trunk) and runs
 in the browser. egui renders through WebGL (eframe glow backend); audio uses

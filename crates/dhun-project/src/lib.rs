@@ -16,8 +16,9 @@ use std::path::Path;
 
 pub use error::ProjectError;
 pub use model::{
-    AdsrSpec, AudioClip, AudioTrack, Channel, DrumKind, DrumLane, Instrument, Master, MixerStrip,
-    Note, NoteLane, Pattern, Project, Step, SynthSpec, WaveformSpec, CURRENT_FORMAT_VERSION,
+    AdsrSpec, AudioClip, AudioTrack, Channel, DrumKind, DrumLane, EffectSpec, Instrument, Master,
+    MixerStrip, Note, NoteLane, Pattern, Project, Step, SynthSpec, WaveformSpec,
+    CURRENT_FORMAT_VERSION,
 };
 
 impl Project {
@@ -247,6 +248,11 @@ mod tests {
                         pan: 0.25,
                         mute: false,
                         solo: false,
+                        effects: vec![EffectSpec::Eq {
+                            low_db: 2.0,
+                            mid_db: -1.5,
+                            high_db: 3.0,
+                        }],
                     },
                 },
             ],
@@ -274,6 +280,15 @@ mod tests {
                 }],
             }],
             song: vec![10],
+            master: Master {
+                gain_db: -1.0,
+                effects: vec![EffectSpec::Reverb {
+                    room_size: 0.6,
+                    damping: 0.5,
+                    wet: 0.25,
+                    dry: 0.9,
+                }],
+            },
             audio_tracks: vec![AudioTrack {
                 id: 100,
                 name: "Guitar".to_string(),

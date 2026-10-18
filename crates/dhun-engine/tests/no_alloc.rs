@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use dhun_engine::RealtimeEngine;
 use dhun_project::{
-    Channel, DrumKind, DrumLane, Instrument, Master, MixerStrip, Pattern, Project, Step,
+    Channel, DrumKind, DrumLane, EffectSpec, Instrument, Master, MixerStrip, Pattern, Project, Step,
 };
 
 struct CountingAlloc;
@@ -60,7 +60,17 @@ fn drum_project() -> Project {
                 instrument: Instrument::Drum {
                     drum: DrumKind::Kick,
                 },
-                mixer: MixerStrip::default(),
+                // A reverb insert so the guard also proves effects don't
+                // allocate on the process path.
+                mixer: MixerStrip {
+                    effects: vec![EffectSpec::Reverb {
+                        room_size: 0.5,
+                        damping: 0.5,
+                        wet: 0.3,
+                        dry: 0.7,
+                    }],
+                    ..MixerStrip::default()
+                },
             },
             Channel {
                 id: 2,

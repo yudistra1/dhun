@@ -21,6 +21,8 @@ pub mod synth;
 pub mod util;
 
 pub use drums::{DrumKit, DrumType};
+pub use effects::compressor::CompressorParams;
+pub use effects::reverb::ReverbParams;
 pub use effects::{Compressor, Effect, Gain, Reverb, ThreeBandEq, ThreeBandEqParams};
 pub use envelope::{Adsr, AdsrParams, Stage};
 pub use filter::SvfLowpass;
