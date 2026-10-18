@@ -19,6 +19,7 @@ pub fn draw(ctx: &egui::Context, state: &mut EditorState) -> Vec<UiCommand> {
 
     transport_bar(ctx, state, &mut commands);
     mixer_panel(ctx, state, &mut commands);
+    piano_roll_panel(ctx, state, &mut commands);
     sequencer_panel(ctx, state, &mut commands);
 
     commands
@@ -234,30 +235,108 @@ fn sequencer_panel(ctx: &egui::Context, state: &mut EditorState, commands: &mut 
     });
 }
 
+fn piano_roll_panel(ctx: &egui::Context, state: &mut EditorState, commands: &mut Vec<UiCommand>) {
+    let Some(channel) = state.first_synth_channel() else {
+        return;
+    };
+    let accent = state
+        .project
+        .channels
+        .iter()
+        .position(|c| c.id == channel)
+        .map_or(theme::LIME, theme::channel_accent);
+    let name = state
+        .project
+        .channel(channel)
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
+    let steps = state.current_pattern().map_or(0, |p| p.steps) as usize;
+
+    // Two octaves, C3..=C5, drawn high note at the top.
+    const LO: u8 = 48;
+    const HI: u8 = 72;
+
+    egui::TopBottomPanel::bottom("piano_roll")
+        .resizable(true)
+        .default_height(230.0)
+        .show(ctx, |ui| {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("PIANO ROLL")
+                        .heading()
+                        .color(theme::LIME)
+                        .strong(),
+                );
+                ui.label(RichText::new(format!("· {name}")).color(theme::TEXT_DIM));
+            });
+            ui.add_space(6.0);
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for pitch in (LO..=HI).rev() {
+                        let black = is_black_key(pitch);
+                        ui.horizontal(|ui| {
+                            let col = if black { theme::TEXT_DIM } else { theme::TEXT };
+                            ui.add_sized(
+                                [48.0, 20.0],
+                                egui::Label::new(
+                                    RichText::new(note_name(pitch)).small().color(col),
+                                ),
+                            );
+                            for step in 0..steps {
+                                if step > 0 && step % 4 == 0 {
+                                    ui.add_space(6.0);
+                                }
+                                let on = state.note_at(channel, pitch, step);
+                                if note_cell(ui, on, accent, black)
+                                    .on_hover_text(format!(
+                                        "{} · step {}",
+                                        note_name(pitch),
+                                        step + 1
+                                    ))
+                                    .clicked()
+                                {
+                                    state.toggle_note(channel, pitch, step);
+                                    commands.push(UiCommand::ProjectEdited);
+                                }
+                            }
+                        });
+                    }
+                });
+        });
+}
+
 // --- Neon widgets --------------------------------------------------------
 
-/// A glowing sequencer step cell. Returns the click response.
-fn step_cell(ui: &mut egui::Ui, on: bool, accent: Color32, downbeat: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 30.0), Sense::click());
+/// A glowing grid cell: lit with the accent + halo when `on`, else a dark tile
+/// (`bg_off`) with a hover outline. Shared by the sequencer and piano roll.
+fn cell(
+    ui: &mut egui::Ui,
+    on: bool,
+    accent: Color32,
+    bg_off: Color32,
+    size: [f32; 2],
+) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(size.into(), Sense::click());
     let painter = ui.painter();
-    let rounding = Rounding::same(6.0);
+    let rounding = Rounding::same(5.0);
 
     if on {
-        // Glow halo behind the lit cell.
         painter.rect_filled(
-            rect.expand(3.0_f32),
-            Rounding::same(9.0),
+            rect.expand(2.0_f32),
+            Rounding::same(8.0),
             theme::glow(accent),
         );
         painter.rect_filled(rect, rounding, accent);
         painter.rect_stroke(
             rect,
             rounding,
-            Stroke::new(1.5_f32, Color32::from_white_alpha(150)),
+            Stroke::new(1.5_f32, Color32::from_white_alpha(140)),
         );
     } else {
-        let fill = if downbeat { theme::SURFACE } else { theme::BG };
-        painter.rect_filled(rect, rounding, fill);
+        painter.rect_filled(rect, rounding, bg_off);
         let stroke = if resp.hovered() {
             Stroke::new(1.5_f32, accent)
         } else {
@@ -266,6 +345,33 @@ fn step_cell(ui: &mut egui::Ui, on: bool, accent: Color32, downbeat: bool) -> eg
         painter.rect_stroke(rect, rounding, stroke);
     }
     resp
+}
+
+/// A glowing sequencer step cell. Returns the click response.
+fn step_cell(ui: &mut egui::Ui, on: bool, accent: Color32, downbeat: bool) -> egui::Response {
+    let bg = if downbeat { theme::SURFACE } else { theme::BG };
+    cell(ui, on, accent, bg, [26.0, 30.0])
+}
+
+/// A piano-roll note cell; black-key rows get a slightly lighter off tile.
+fn note_cell(ui: &mut egui::Ui, on: bool, accent: Color32, black_key: bool) -> egui::Response {
+    let bg = if black_key { theme::SURFACE } else { theme::BG };
+    cell(ui, on, accent, bg, [24.0, 20.0])
+}
+
+/// The MIDI note name for a pitch, e.g. 60 -> "C4".
+fn note_name(pitch: u8) -> String {
+    const NAMES: [&str; 12] = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
+    let name = NAMES[(pitch % 12) as usize];
+    let octave = i32::from(pitch) / 12 - 1;
+    format!("{name}{octave}")
+}
+
+/// Whether a pitch is a black key (sharp).
+fn is_black_key(pitch: u8) -> bool {
+    matches!(pitch % 12, 1 | 3 | 6 | 8 | 10)
 }
 
 /// A filled, glowing action button (used for Play/Stop).

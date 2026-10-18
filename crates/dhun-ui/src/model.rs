@@ -2,7 +2,8 @@
 //! pure edit helpers that are unit-testable without egui.
 
 use dhun_project::{
-    Channel, DrumKind, DrumLane, Instrument, Master, MixerStrip, Pattern, Project, Step,
+    Channel, DrumKind, DrumLane, Instrument, Master, MixerStrip, Note, NoteLane, Pattern, Project,
+    Step, SynthSpec,
 };
 
 /// Default velocity applied when a step is switched on.
@@ -66,13 +67,27 @@ impl EditorState {
                 drum(1, "Kick", DrumKind::Kick, 0.0),
                 drum(2, "Snare", DrumKind::Snare, -2.0),
                 drum(3, "Closed Hat", DrumKind::ClosedHat, -6.0),
+                Channel {
+                    id: 4,
+                    name: "Lead".to_string(),
+                    instrument: Instrument::Synth {
+                        params: SynthSpec::default(),
+                    },
+                    mixer: MixerStrip {
+                        gain_db: -4.0,
+                        ..MixerStrip::default()
+                    },
+                },
             ],
             patterns: vec![Pattern {
                 id: 1,
                 name: "Pattern 1".to_string(),
                 steps,
                 drum_lanes: vec![empty_lane(1), empty_lane(2), empty_lane(3)],
-                note_lanes: vec![],
+                note_lanes: vec![NoteLane {
+                    channel: 4,
+                    notes: vec![],
+                }],
             }],
             song: vec![1],
             master: Master::default(),
@@ -111,6 +126,57 @@ impl EditorState {
             .and_then(|p| p.drum_lanes.iter().find(|l| l.channel == channel))
             .and_then(|l| l.steps.get(step))
             .is_some_and(|c| c.on)
+    }
+
+    /// The first synth channel's id, if any (the one the piano roll edits).
+    #[must_use]
+    pub fn first_synth_channel(&self) -> Option<u64> {
+        self.project
+            .channels
+            .iter()
+            .find(|c| matches!(c.instrument, Instrument::Synth { .. }))
+            .map(|c| c.id)
+    }
+
+    /// Whether a one-step note exists at `pitch` on `step` in the current
+    /// pattern's lane for `channel`.
+    #[must_use]
+    pub fn note_at(&self, channel: u64, pitch: u8, step: usize) -> bool {
+        let start = step as u32 * self.project.ticks_per_step();
+        self.current_pattern()
+            .and_then(|p| p.note_lanes.iter().find(|l| l.channel == channel))
+            .is_some_and(|l| {
+                l.notes
+                    .iter()
+                    .any(|n| n.pitch == pitch && n.start_tick == start)
+            })
+    }
+
+    /// Toggles a one-step note at `pitch`/`step` on `channel`'s note lane.
+    /// Adding uses one step of length and [`DEFAULT_STEP_VELOCITY`].
+    pub fn toggle_note(&mut self, channel: u64, pitch: u8, step: usize) {
+        let tpq = self.project.ticks_per_step();
+        let start = step as u32 * tpq;
+        let Some(pattern) = self.project.patterns.get_mut(self.selected_pattern) else {
+            return;
+        };
+        let Some(lane) = pattern.note_lanes.iter_mut().find(|l| l.channel == channel) else {
+            return;
+        };
+        if let Some(pos) = lane
+            .notes
+            .iter()
+            .position(|n| n.pitch == pitch && n.start_tick == start)
+        {
+            lane.notes.remove(pos);
+        } else {
+            lane.notes.push(Note {
+                pitch,
+                start_tick: start,
+                length_ticks: tpq,
+                velocity: DEFAULT_STEP_VELOCITY,
+            });
+        }
     }
 
     /// Overwrites the current pattern's drum lanes with a built-in [`Preset`],
@@ -212,16 +278,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn demo_has_three_drum_channels_and_one_empty_pattern() {
+    fn demo_has_drum_and_synth_channels_and_one_empty_pattern() {
         let state = EditorState::demo();
-        assert_eq!(state.project.channels.len(), 3);
+        // Three drums + one synth.
+        assert_eq!(state.project.channels.len(), 4);
+        let drums = state
+            .project
+            .channels
+            .iter()
+            .filter(|c| matches!(c.instrument, Instrument::Drum { .. }))
+            .count();
+        assert_eq!(drums, 3);
         assert_eq!(state.project.patterns.len(), 1);
         assert_eq!(state.project.patterns[0].steps, 16);
-        // Every step starts off.
+        // Every drum step starts off, and there are no notes yet.
         assert!(state.project.patterns[0]
             .drum_lanes
             .iter()
             .all(|l| l.steps.iter().all(|s| !s.on)));
+        assert!(state.project.patterns[0]
+            .note_lanes
+            .iter()
+            .all(|l| l.notes.is_empty()));
         // And it is a valid, renderable project.
         state
             .project
@@ -243,6 +321,34 @@ mod tests {
             state.project.patterns[0].drum_lanes[0].steps[0].velocity,
             0.0
         );
+    }
+
+    #[test]
+    fn demo_has_a_synth_channel_with_a_note_lane() {
+        let state = EditorState::demo();
+        assert_eq!(state.first_synth_channel(), Some(4));
+        assert!(state.project.patterns[0]
+            .note_lanes
+            .iter()
+            .any(|l| l.channel == 4));
+    }
+
+    #[test]
+    fn toggle_note_adds_then_removes() {
+        let mut state = EditorState::demo();
+        let ch = state.first_synth_channel().unwrap();
+        assert!(!state.note_at(ch, 60, 2));
+        state.toggle_note(ch, 60, 2);
+        assert!(state.note_at(ch, 60, 2));
+        // Placed on the grid at step 2 with one step of length.
+        let tpq = state.project.ticks_per_step();
+        let note = state.project.patterns[0].note_lanes[0].notes[0];
+        assert_eq!(note.pitch, 60);
+        assert_eq!(note.start_tick, 2 * tpq);
+        assert_eq!(note.length_ticks, tpq);
+        state.toggle_note(ch, 60, 2);
+        assert!(!state.note_at(ch, 60, 2));
+        state.project.validate().unwrap();
     }
 
     #[test]

@@ -168,6 +168,13 @@ impl Project {
         Ok(())
     }
 
+    /// Ticks per sequencer step, derived from the timing resolution and
+    /// `steps_per_beat` (e.g. 960 PPQ / 4 = 240 ticks per sixteenth-note step).
+    #[must_use]
+    pub fn ticks_per_step(&self) -> u32 {
+        dhun_core::PPQ / self.steps_per_beat.max(1)
+    }
+
     /// Looks up a channel by id.
     #[must_use]
     pub fn channel(&self, id: u64) -> Option<&Channel> {

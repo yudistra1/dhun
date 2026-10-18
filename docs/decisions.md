@@ -2,6 +2,19 @@
 
 Running log of non-obvious decisions, per CLAUDE.md. Newest first.
 
+## 2026-10-18 — M6 piano roll is step-style for v0.1
+**Decision:** the piano roll places fixed, one-step-long notes on a pitch × step
+grid (click to add/remove), reusing the sequencer's grid timing
+(`Project::ticks_per_step`) and the shared glowing `cell` widget. The demo
+project ships a "Lead" synth channel with an empty note lane.
+**Reason:** satisfies M6's "write and play a melody" with a UI consistent with
+the drum grid, and it rides the engine's existing note scheduling + live program
+swap (edits are heard on the next loop, same as drums). The richer piano-roll
+editing in SPEC §3.3 — variable note length (resize), drag-to-move, per-note
+velocity, and snap settings — is deferred to a follow-up; the on-disk `Note`
+model already carries `start_tick`/`length_ticks`/`velocity` to support it
+without a format change.
+
 ## 2026-10-18 — Live edits via off-thread program rebuild + lock-free swap
 **Decision:** editing while playing rebuilds a `Program` (events + per-channel and
 master mix) off the audio thread; it is sent over an `rtrb` queue and swapped in
