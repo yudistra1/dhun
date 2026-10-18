@@ -2,6 +2,25 @@
 
 Running log of non-obvious decisions, per CLAUDE.md. Newest first.
 
+## 2026-10-18 — Bundle Orbitron (OFL-1.1) as the display font
+**Decision:** vendor the Orbitron variable font at
+`crates/dhun-ui/assets/fonts/Orbitron-Variable.ttf` (with its `OFL.txt`) and use
+it for headings/titles via a named egui font family; body stays on egui's
+built-in proportional face and numeric readouts use the built-in monospace.
+**Reason:** the neon-Tokyo look wants a geometric display face. Orbitron is
+licensed under the SIL Open Font License 1.1, which permits redistribution as
+long as the license travels with it — satisfying the clean-room / permissive-
+assets rule (CLAUDE.md). egui embeds the bytes via `include_bytes!`, so the font
+ships inside the binary and needs no system install.
+
+## 2026-10-18 — Sequencer ships built-in groove presets
+**Decision:** `dhun-ui` exposes a `Preset` enum (Four-on-the-Floor, Boom Bap,
+Trap, Clear) that fills the current pattern's drum lanes by each lane's drum
+kind, surfaced as a button row above the grid.
+**Reason:** gives a one-click starting point so the app is usable without
+hand-placing every step; patterns are authored on a 16-step grid and clamped to
+the pattern length.
+
 ## 2026-10-18 — UI talks to the engine only via `UiCommand`s; app re-prepares on Play
 **Decision:** `dhun-ui` depends on `dhun-project` + `egui` only (SPEC §6) and
 edits a `Project` in place, returning `UiCommand`s from `draw`. `dhun-app` owns

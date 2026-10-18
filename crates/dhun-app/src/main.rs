@@ -18,7 +18,10 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Dhun",
         options,
-        Box::new(|_cc| Ok(Box::new(DhunApp::new()))),
+        Box::new(|cc| {
+            dhun_ui::apply_theme(&cc.egui_ctx);
+            Ok(Box::new(DhunApp::new()))
+        }),
     )
 }
 

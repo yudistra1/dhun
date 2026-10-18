@@ -11,8 +11,10 @@
 
 pub mod command;
 pub mod model;
+pub mod theme;
 pub mod view;
 
 pub use command::UiCommand;
-pub use model::EditorState;
+pub use model::{EditorState, Preset};
+pub use theme::apply_theme;
 pub use view::draw;

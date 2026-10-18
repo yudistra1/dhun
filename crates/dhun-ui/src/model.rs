@@ -112,6 +112,99 @@ impl EditorState {
             .and_then(|l| l.steps.get(step))
             .is_some_and(|c| c.on)
     }
+
+    /// Overwrites the current pattern's drum lanes with a built-in [`Preset`],
+    /// placing hits by each lane's drum kind.
+    pub fn apply_preset(&mut self, preset: Preset) {
+        let steps = self.current_pattern().map_or(0, |p| p.steps) as usize;
+        // Map channel id -> its drum kind (immutable borrow finished before the
+        // mutable one below).
+        let kinds: Vec<(u64, DrumKind)> = self
+            .project
+            .channels
+            .iter()
+            .filter_map(|c| match c.instrument {
+                Instrument::Drum { drum } => Some((c.id, drum)),
+                Instrument::Synth { .. } => None,
+            })
+            .collect();
+
+        let Some(pattern) = self.project.patterns.get_mut(self.selected_pattern) else {
+            return;
+        };
+        for lane in &mut pattern.drum_lanes {
+            let Some(&(_, kind)) = kinds.iter().find(|(id, _)| *id == lane.channel) else {
+                continue;
+            };
+            let active = preset.active_steps(kind, steps);
+            for (i, cell) in lane.steps.iter_mut().enumerate() {
+                cell.on = active.contains(&i);
+                cell.velocity = if cell.on { DEFAULT_STEP_VELOCITY } else { 0.0 };
+            }
+        }
+    }
+}
+
+/// Built-in arrangement presets for the step sequencer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Preset {
+    /// Four-on-the-floor house groove.
+    FourOnTheFloor,
+    /// Classic boom-bap backbeat.
+    BoomBap,
+    /// Trap-style pattern with busy hats.
+    Trap,
+    /// Clear every step.
+    Clear,
+}
+
+impl Preset {
+    /// All presets, in display order.
+    pub const ALL: [Preset; 4] = [
+        Preset::FourOnTheFloor,
+        Preset::BoomBap,
+        Preset::Trap,
+        Preset::Clear,
+    ];
+
+    /// A short label for buttons.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Preset::FourOnTheFloor => "Four on the Floor",
+            Preset::BoomBap => "Boom Bap",
+            Preset::Trap => "Trap",
+            Preset::Clear => "Clear",
+        }
+    }
+
+    /// Which step indices are on for a given drum kind (patterns are authored on
+    /// a 16-step grid and clamped to `steps`).
+    #[must_use]
+    pub fn active_steps(self, kind: DrumKind, steps: usize) -> Vec<usize> {
+        let grid: &[usize] = match (self, kind) {
+            (Preset::Clear, _) => &[],
+
+            (Preset::FourOnTheFloor, DrumKind::Kick) => &[0, 4, 8, 12],
+            (Preset::FourOnTheFloor, DrumKind::Snare | DrumKind::Clap) => &[4, 12],
+            (Preset::FourOnTheFloor, DrumKind::ClosedHat) => &[2, 6, 10, 14],
+            (Preset::FourOnTheFloor, DrumKind::OpenHat) => &[2, 6, 10, 14],
+
+            (Preset::BoomBap, DrumKind::Kick) => &[0, 10],
+            (Preset::BoomBap, DrumKind::Snare | DrumKind::Clap) => &[4, 12],
+            (Preset::BoomBap, DrumKind::ClosedHat) => &[0, 2, 4, 6, 8, 10, 12, 14],
+            (Preset::BoomBap, DrumKind::OpenHat) => &[14],
+
+            (Preset::Trap, DrumKind::Kick) => &[0, 6, 10],
+            (Preset::Trap, DrumKind::Snare | DrumKind::Clap) => &[8],
+            (Preset::Trap, DrumKind::ClosedHat) => &[0, 2, 4, 6, 8, 10, 11, 12, 14, 15],
+            (Preset::Trap, DrumKind::OpenHat) => &[7],
+
+            // Toms are left untouched by these grooves.
+            (_, DrumKind::Tom) => &[],
+        };
+        grid.iter().copied().filter(|&i| i < steps).collect()
+    }
 }
 
 #[cfg(test)]
@@ -150,6 +243,30 @@ mod tests {
             state.project.patterns[0].drum_lanes[0].steps[0].velocity,
             0.0
         );
+    }
+
+    #[test]
+    fn preset_fills_lanes_by_drum_kind() {
+        let mut state = EditorState::demo();
+        state.apply_preset(Preset::FourOnTheFloor);
+        // Kick on the quarter notes; the project stays valid.
+        for step in [0, 4, 8, 12] {
+            assert!(state.step_on(1, step), "kick should be on at {step}");
+        }
+        assert!(!state.step_on(1, 1));
+        assert!(state.step_on(2, 4), "snare on beat 2");
+        state.project.validate().unwrap();
+    }
+
+    #[test]
+    fn clear_preset_empties_every_lane() {
+        let mut state = EditorState::demo();
+        state.apply_preset(Preset::Trap);
+        state.apply_preset(Preset::Clear);
+        assert!(state.project.patterns[0]
+            .drum_lanes
+            .iter()
+            .all(|l| l.steps.iter().all(|s| !s.on)));
     }
 
     #[test]
