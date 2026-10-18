@@ -5,12 +5,15 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+description = "Dhun headless CLI: render, info, validate."
 
 [[bin]]
 name = "dhun"
 path = "src/main.rs"
 
 [dependencies]
-dhun-core.workspace = true
 dhun-engine.workspace = true
 dhun-project.workspace = true
+clap.workspace = true
+hound.workspace = true
+anyhow.workspace = true

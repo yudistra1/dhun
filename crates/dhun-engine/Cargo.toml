@@ -5,8 +5,13 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+description = "Dhun audio engine: scheduling, voices, and offline render."
 
 [dependencies]
 dhun-core.workspace = true
 dhun-dsp.workspace = true
 dhun-project.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+hound.workspace = true

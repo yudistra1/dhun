@@ -30,3 +30,8 @@ dhun-ui = { path = "crates/dhun-ui" }
 
 # External crates (SPEC §7). Pulled in by crates as milestones land.
 thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+hound = "3"
+anyhow = "1"

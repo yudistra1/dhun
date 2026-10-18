@@ -1,0 +1,102 @@
+{
+  "format_version": 1,
+  "name": "Basic Beat",
+  "sample_rate": 48000,
+  "tempo": 120.0,
+  "steps_per_beat": 4,
+  "channels": [
+    {
+      "id": 1,
+      "name": "Kick",
+      "instrument": { "kind": "drum", "drum": "kick" },
+      "mixer": { "gain_db": 0.0, "pan": 0.0, "mute": false, "solo": false }
+    },
+    {
+      "id": 2,
+      "name": "Snare",
+      "instrument": { "kind": "drum", "drum": "snare" },
+      "mixer": { "gain_db": -2.0, "pan": 0.0, "mute": false, "solo": false }
+    },
+    {
+      "id": 3,
+      "name": "Closed Hat",
+      "instrument": { "kind": "drum", "drum": "closed_hat" },
+      "mixer": { "gain_db": -6.0, "pan": 0.0, "mute": false, "solo": false }
+    }
+  ],
+  "patterns": [
+    {
+      "id": 1,
+      "name": "Beat",
+      "steps": 16,
+      "drum_lanes": [
+        {
+          "channel": 1,
+          "steps": [
+            { "on": true, "velocity": 1.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": true, "velocity": 1.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 }
+          ]
+        },
+        {
+          "channel": 2,
+          "steps": [
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": true, "velocity": 0.9 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": true, "velocity": 0.9 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 },
+            { "on": false, "velocity": 0.0 }
+          ]
+        },
+        {
+          "channel": 3,
+          "steps": [
+            { "on": true, "velocity": 0.6 },
+            { "on": false, "velocity": 0.0 },
+            { "on": true, "velocity": 0.6 },
+            { "on": false, "velocity": 0.0 },
+            { "on": true, "velocity": 0.6 },
+            { "on": false, "velocity": 0.0 },
+            { "on": true, "velocity": 0.6 },
+            { "on": false, "velocity": 0.0 },
+            { "on": true, "velocity": 0.6 },
+            { "on": false, "velocity": 0.0 },
+            { "on": true, "velocity": 0.6 },
+            { "on": false, "velocity": 0.0 },
+            { "on": true, "velocity": 0.6 },
+            { "on": false, "velocity": 0.0 },
+            { "on": true, "velocity": 0.6 },
+            { "on": false, "velocity": 0.0 }
+          ]
+        }
+      ],
+      "note_lanes": []
+    }
+  ],
+  "song": [1],
+  "master": { "gain_db": -1.0 }
+}

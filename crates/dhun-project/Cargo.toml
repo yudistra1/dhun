@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+description = "Dhun project model, serialization, and migrations."
 
 [dependencies]
 dhun-core.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
