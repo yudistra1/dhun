@@ -179,6 +179,15 @@ impl EditorState {
         }
     }
 
+    /// Removes every note from `channel`'s note lane in the current pattern.
+    pub fn clear_notes(&mut self, channel: u64) {
+        if let Some(pattern) = self.project.patterns.get_mut(self.selected_pattern) {
+            if let Some(lane) = pattern.note_lanes.iter_mut().find(|l| l.channel == channel) {
+                lane.notes.clear();
+            }
+        }
+    }
+
     /// Overwrites the current pattern's drum lanes with a built-in [`Preset`],
     /// placing hits by each lane's drum kind.
     pub fn apply_preset(&mut self, preset: Preset) {
@@ -331,6 +340,19 @@ mod tests {
             .note_lanes
             .iter()
             .any(|l| l.channel == 4));
+    }
+
+    #[test]
+    fn clear_notes_empties_the_lane() {
+        let mut state = EditorState::demo();
+        let ch = state.first_synth_channel().unwrap();
+        state.toggle_note(ch, 60, 0);
+        state.toggle_note(ch, 64, 4);
+        assert!(state.note_at(ch, 60, 0));
+        state.clear_notes(ch);
+        assert!(!state.note_at(ch, 60, 0));
+        assert!(!state.note_at(ch, 64, 4));
+        assert!(state.project.patterns[0].note_lanes[0].notes.is_empty());
     }
 
     #[test]

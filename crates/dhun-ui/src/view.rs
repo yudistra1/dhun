@@ -269,6 +269,14 @@ fn piano_roll_panel(ctx: &egui::Context, state: &mut EditorState, commands: &mut
                         .strong(),
                 );
                 ui.label(RichText::new(format!("· {name}")).color(theme::TEXT_DIM));
+                if ui
+                    .button("Clear")
+                    .on_hover_text("Remove all notes from this lane")
+                    .clicked()
+                {
+                    state.clear_notes(channel);
+                    commands.push(UiCommand::ProjectEdited);
+                }
             });
             ui.add_space(6.0);
 
