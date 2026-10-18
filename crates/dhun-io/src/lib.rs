@@ -14,8 +14,11 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+// Recording uses device input + a writer thread, neither available on wasm.
+#[cfg(not(target_arch = "wasm32"))]
 mod record;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub use record::{Recorder, Recording};
 
 use std::sync::atomic::{AtomicBool, Ordering};

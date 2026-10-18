@@ -11,6 +11,12 @@ description = "Dhun real-time audio device I/O (cpal) and transport messaging."
 dhun-core.workspace = true
 dhun-engine.workspace = true
 thiserror.workspace = true
-cpal.workspace = true
 rtrb.workspace = true
 hound.workspace = true
+
+# cpal drives real devices natively and the WebAudio backend on wasm.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cpal.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+cpal = { workspace = true, features = ["wasm-bindgen"] }

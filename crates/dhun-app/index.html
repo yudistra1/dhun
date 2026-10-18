@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+    <title>Dhun</title>
+    <meta name="description" content="Dhun — an original open desktop DAW in Rust, running in your browser." />
+
+    <!-- Trunk builds this crate to WebAssembly and injects the loader. -->
+    <link data-trunk rel="rust" href="Cargo.toml" data-bin="dhun-app" />
+
+    <style>
+      :root { color-scheme: dark; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0c18; }
+      canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+      #loading {
+        position: absolute; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 0.75rem;
+        color: #e7ecff; font-family: system-ui, sans-serif; letter-spacing: 0.08em;
+      }
+      #loading .brand { color: #ff2e97; font-size: 1.4rem; font-weight: 700; }
+      #loading .sub { color: #8a93c2; font-size: 0.85rem; }
+      .dot { color: #22e6ff; }
+    </style>
+  </head>
+  <body>
+    <div id="loading">
+      <div class="brand">◆ DHUN</div>
+      <div class="sub">loading the studio<span class="dot">…</span></div>
+    </div>
+    <canvas id="dhun_canvas"></canvas>
+
+    <script>
+      const canvas = document.getElementById("dhun_canvas");
+      const obs = new MutationObserver(() => {
+        document.getElementById("loading")?.remove();
+        obs.disconnect();
+      });
+      obs.observe(canvas, { attributes: true, childList: true });
+      setTimeout(() => document.getElementById("loading")?.remove(), 6000);
+    </script>
+  </body>
+</html>

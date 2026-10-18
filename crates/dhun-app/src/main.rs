@@ -10,19 +10,46 @@ use dhun_io::Playback;
 use dhun_ui::{draw, EditorState, UiCommand};
 use eframe::egui;
 
+/// Shared app-creator: install the theme and build the app.
+fn create_app(cc: &eframe::CreationContext<'_>) -> Box<dyn eframe::App> {
+    dhun_ui::apply_theme(&cc.egui_ctx);
+    Box::new(DhunApp::new())
+}
+
+/// Native entry point: open a desktop window.
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 520.0]),
         ..Default::default()
     };
-    eframe::run_native(
-        "Dhun",
-        options,
-        Box::new(|cc| {
-            dhun_ui::apply_theme(&cc.egui_ctx);
-            Ok(Box::new(DhunApp::new()))
-        }),
-    )
+    eframe::run_native("Dhun", options, Box::new(|cc| Ok(create_app(cc))))
+}
+
+/// Web entry point: mount the app on the `dhun_canvas` element. Audio starts on
+/// the first Play click (the browser's autoplay policy requires a user gesture).
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    use wasm_bindgen::JsCast as _;
+
+    console_error_panic_hook::set_once();
+    let web_options = eframe::WebOptions::default();
+
+    wasm_bindgen_futures::spawn_local(async {
+        let canvas = web_sys::window()
+            .expect("no window")
+            .document()
+            .expect("no document")
+            .get_element_by_id("dhun_canvas")
+            .expect("missing #dhun_canvas")
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .expect("#dhun_canvas is not a canvas");
+
+        eframe::WebRunner::new()
+            .start(canvas, web_options, Box::new(|cc| Ok(create_app(cc))))
+            .await
+            .expect("failed to start Dhun web app");
+    });
 }
 
 /// Application state: the editor plus the live audio session (if any).

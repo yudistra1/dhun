@@ -2,6 +2,19 @@
 
 Running log of non-obvious decisions, per CLAUDE.md. Newest first.
 
+## 2026-10-18 — Web build: egui→WASM with cpal's WebAudio backend
+**Decision:** `dhun-app` builds to `wasm32-unknown-unknown` (via Trunk) and runs
+in the browser. egui renders through WebGL (eframe glow backend); audio uses
+cpal's WebAudio backend, enabled with a wasm-only `wasm-bindgen` cpal feature.
+The `Recorder` (device input + writer thread) is `#[cfg(not(wasm32))]`; `Playback`
+(output) compiles for both. A web entry point (`#[cfg(target_arch="wasm32")] main`)
+mounts the app on a `<canvas>`; `crates/dhun-app/index.html` is the Trunk entry.
+**Reason:** lets anyone try Dhun from a URL with real in-browser sound and no
+install. Reusing cpal's WebAudio backend means the same `Playback`/engine code
+runs on web — no separate audio path. Browser autoplay policy is satisfied
+because the AudioContext is created from the Play click (a user gesture).
+Deployed to GitHub Pages.
+
 ## 2026-10-18 — M7 audio: recording, in-memory clip assets, unified mix path
 **Decisions:**
 - **Recording** (`dhun-io::Recorder`): the cpal input callback pushes samples into
