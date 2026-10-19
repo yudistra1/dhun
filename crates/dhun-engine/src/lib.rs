@@ -11,6 +11,7 @@
 
 pub mod audio;
 pub mod error;
+pub mod meters;
 pub mod player;
 pub mod render;
 
@@ -20,6 +21,7 @@ mod voice;
 
 pub use audio::{AudioAssets, ClipData};
 pub use error::EngineError;
+pub use meters::EngineMeters;
 pub use player::{Program, RealtimeEngine};
 pub use render::{render_offline, render_offline_with, RenderRange, RenderedAudio};
 

@@ -19,6 +19,7 @@ use dhun_project::Project;
 use crate::audio::{AudioAssets, ClipData};
 use crate::error::EngineError;
 use crate::inserts::{build_chain, Insert};
+use crate::meters::EngineMeters;
 use crate::render::{pan_gains, TAIL_SECONDS};
 use crate::schedule::{collect_channel_events, song_total_samples, Timing};
 use crate::voice::{build_voice, EventKind, Voice};
@@ -54,6 +55,9 @@ pub struct Program {
     events: Vec<ChanEvent>,
     /// Effective (left, right) gain per channel, with mute/solo already applied.
     gains: Vec<(f32, f32)>,
+    /// Per-channel overall gain magnitude (`sqrt(lg² + rg²)`), for post-fader
+    /// metering.
+    gain_mag: Vec<f32>,
     /// Per-channel insert chains, aligned with `gains` / the engine's voices.
     channel_inserts: Vec<Vec<Insert>>,
     audio: Vec<AudioPlayback>,
@@ -100,16 +104,19 @@ impl Program {
 
         let sr_f = sr.get() as f32;
         let mut gains = Vec::with_capacity(project.channels.len());
+        let mut gain_mag = Vec::with_capacity(project.channels.len());
         let mut channel_inserts = Vec::with_capacity(project.channels.len());
         let mut events = Vec::new();
 
         for (i, ch) in project.channels.iter().enumerate() {
             let audible = !ch.mixer.mute && (!any_solo || ch.mixer.solo);
-            gains.push(if audible {
+            let (lg, rg) = if audible {
                 pan_gains(ch.mixer.gain_db, ch.mixer.pan)
             } else {
                 (0.0, 0.0)
-            });
+            };
+            gains.push((lg, rg));
+            gain_mag.push((lg * lg + rg * rg).sqrt());
             channel_inserts.push(build_chain(&ch.mixer.effects, sr_f));
             for e in collect_channel_events(project, ch.id, &timing) {
                 if e.at < total_frames {
@@ -161,6 +168,7 @@ impl Program {
         Ok(Program {
             events,
             gains,
+            gain_mag,
             channel_inserts,
             audio,
             master_l: build_chain(&project.master.effects, sr_f),
@@ -183,6 +191,9 @@ pub struct RealtimeEngine {
     sample_rate: u32,
     voices: Vec<Voice>,
     program: Box<Program>,
+    meters: Arc<EngineMeters>,
+    /// Per-channel peak scratch (pre-allocated; reset each `process`).
+    peaks: Vec<f32>,
     cursor: usize,
     position: usize,
     playing: bool,
@@ -219,22 +230,32 @@ impl RealtimeEngine {
             Some(s) => SampleRate::new(s).map_err(|_| EngineError::UnsupportedSampleRate(s))?,
             None => SampleRate::new(project.sample_rate).expect("sample rate validated"),
         };
-        let voices = project
+        let voices: Vec<Voice> = project
             .channels
             .iter()
             .map(|c| build_voice(&c.instrument, sr.get() as f32))
             .collect();
         let program = Box::new(Program::build_with(project, sr.get(), assets)?);
+        let meters = Arc::new(EngineMeters::new(voices.len()));
+        let peaks = vec![0.0; voices.len()];
 
         Ok(Self {
             sample_rate: sr.get(),
             voices,
             program,
+            meters,
+            peaks,
             cursor: 0,
             position: 0,
             playing: false,
             looping: false,
         })
+    }
+
+    /// A shared handle to this engine's live meters (read from the UI thread).
+    #[must_use]
+    pub fn meters(&self) -> Arc<EngineMeters> {
+        Arc::clone(&self.meters)
     }
 
     /// The sample rate this engine was prepared for.
@@ -314,6 +335,10 @@ impl RealtimeEngine {
     /// allocation, locks, or I/O.
     pub fn process(&mut self, out: &mut [f32]) {
         let master = self.program.master;
+        // Reset per-channel peak accumulators for this block.
+        self.peaks.fill(0.0);
+        let mut peak_l = 0.0f32;
+        let mut peak_r = 0.0f32;
         for frame in out.chunks_exact_mut(2) {
             let limit = if self.looping {
                 self.program.song_frames
@@ -353,6 +378,10 @@ impl RealtimeEngine {
                 for insert in &mut self.program.channel_inserts[i] {
                     v = insert.tick(v);
                 }
+                let av = v.abs();
+                if av > self.peaks[i] {
+                    self.peaks[i] = av;
+                }
                 let (lg, rg) = self.program.gains[i];
                 l += v * lg;
                 r += v * rg;
@@ -372,10 +401,21 @@ impl RealtimeEngine {
             for insert in &mut self.program.master_r {
                 r = insert.tick(r);
             }
-            frame[0] = l * master;
-            frame[1] = r * master;
+            let out_l = l * master;
+            let out_r = r * master;
+            frame[0] = out_l;
+            frame[1] = out_r;
+            peak_l = peak_l.max(out_l.abs());
+            peak_r = peak_r.max(out_r.abs());
             self.position += 1;
         }
+
+        // Publish this block's peaks (per channel, post-fader; and master).
+        for i in 0..self.peaks.len() {
+            self.meters
+                .store_channel(i, self.peaks[i] * self.program.gain_mag[i]);
+        }
+        self.meters.store_master(peak_l, peak_r);
     }
 }
 
@@ -538,6 +578,31 @@ mod tests {
             (audio.interleaved[(at + 2) * 2] - 0.5 * std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-3,
             "second clip sample two frames later"
         );
+    }
+
+    #[test]
+    fn meters_report_levels_while_playing() {
+        let mut engine = RealtimeEngine::prepare(&one_kick_project(), None).unwrap();
+        let meters = engine.meters();
+        engine.play();
+        let mut buf = vec![0.0f32; 1024 * 2];
+        engine.process(&mut buf);
+        assert!(
+            meters.channel_peak(0) > 0.0,
+            "kick channel meter should move"
+        );
+        let (ml, mr) = meters.master_peak();
+        assert!(ml > 0.0 || mr > 0.0, "master meter should move");
+    }
+
+    #[test]
+    fn meters_are_zero_when_stopped() {
+        let mut engine = RealtimeEngine::prepare(&one_kick_project(), None).unwrap();
+        let meters = engine.meters();
+        let mut buf = vec![0.0f32; 512 * 2];
+        engine.process(&mut buf); // not playing
+        assert_eq!(meters.channel_peak(0), 0.0);
+        assert_eq!(meters.master_peak(), (0.0, 0.0));
     }
 
     #[test]

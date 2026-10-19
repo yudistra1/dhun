@@ -10,11 +10,13 @@
 #![warn(missing_docs)]
 
 pub mod command;
+pub mod meters;
 pub mod model;
 pub mod theme;
 pub mod view;
 
 pub use command::UiCommand;
+pub use meters::Meters;
 pub use model::{EditorState, Preset};
 pub use theme::apply_theme;
 pub use view::draw;

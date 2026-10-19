@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample, StreamConfig};
-use dhun_engine::{Program, Project, RealtimeEngine};
+use dhun_engine::{EngineMeters, Program, Project, RealtimeEngine};
 use rtrb::{Consumer, Producer, RingBuffer};
 use thiserror::Error;
 
@@ -95,6 +95,7 @@ pub struct Playback {
     messages: Producer<Msg>,
     recycle: Consumer<Box<Program>>,
     finished: Arc<AtomicBool>,
+    meters: Arc<EngineMeters>,
     sample_rate: u32,
 }
 
@@ -119,6 +120,7 @@ impl Playback {
         let config: StreamConfig = supported.config();
 
         let engine = RealtimeEngine::prepare(project, Some(sample_rate))?;
+        let meters = engine.meters();
         let (msg_tx, msg_rx) = RingBuffer::<Msg>::new(64);
         let (recycle_tx, recycle_rx) = RingBuffer::<Box<Program>>::new(16);
         let finished = Arc::new(AtomicBool::new(false));
@@ -157,6 +159,7 @@ impl Playback {
             messages: msg_tx,
             recycle: recycle_rx,
             finished,
+            meters,
             sample_rate,
         })
     }
@@ -165,6 +168,24 @@ impl Playback {
     #[must_use]
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    /// Number of channel meters (instrument channels).
+    #[must_use]
+    pub fn channel_count(&self) -> usize {
+        self.meters.channel_count()
+    }
+
+    /// The latest post-fader peak for channel `i` (linear).
+    #[must_use]
+    pub fn channel_peak(&self, i: usize) -> f32 {
+        self.meters.channel_peak(i)
+    }
+
+    /// The latest master peak as `(left, right)`.
+    #[must_use]
+    pub fn master_peak(&self) -> (f32, f32) {
+        self.meters.master_peak()
     }
 
     /// Whether non-looping playback has reached the end.

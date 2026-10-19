@@ -75,6 +75,7 @@ impl DhunApp {
                 playback.set_looping(self.editor.looping);
                 playback.play();
                 self.playback = Some(playback);
+                self.editor.meters.reset_clips();
                 self.error = None;
             }
             Err(e) => {
@@ -115,6 +116,8 @@ impl DhunApp {
 
 impl eframe::App for DhunApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.pull_meters();
+
         for command in draw(ctx, &mut self.editor) {
             self.apply(command);
         }
@@ -132,10 +135,25 @@ impl eframe::App for DhunApp {
             });
         }
 
-        // While playing, keep repainting so the finished state is noticed
-        // promptly (and so future meters animate).
-        if self.editor.playing {
+        // Keep repainting while playing, and while meters are still falling, so
+        // the levels animate smoothly.
+        if self.editor.playing || self.editor.meters.is_active() {
             ctx.request_repaint();
+        }
+    }
+}
+
+impl DhunApp {
+    /// Pulls the latest meter levels from the live session into the UI state.
+    fn pull_meters(&mut self) {
+        if let Some(pb) = &self.playback {
+            let peaks: Vec<f32> = (0..pb.channel_count())
+                .map(|i| pb.channel_peak(i))
+                .collect();
+            self.editor.meters.feed(&peaks, pb.master_peak());
+        } else {
+            // No session: decay the meters toward zero.
+            self.editor.meters.feed(&[], (0.0, 0.0));
         }
     }
 }

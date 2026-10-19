@@ -2,6 +2,21 @@
 
 Running log of non-obvious decisions, per CLAUDE.md. Newest first.
 
+## 2026-10-18 — Mixer meters via lock-free atomics
+**Decision:** the audio thread publishes per-channel (post-fader) and master
+peak levels into `EngineMeters` (an `AtomicU32`-per-slot store, floats as bit
+patterns, `Relaxed`) each `process` block; `Playback` hands a shared `Arc` to the
+app, which feeds them into a UI-side `Meters` that applies a per-frame falloff
+and latches a clip flag. The mixer draws a green→amber→red bar + clip dot per
+channel and on master.
+**Reason:** meters are engine→UI data, and the UI may only reach the engine via
+lock-free messaging (SPEC §6) — atomics are the simplest wait-free channel and
+keep the audio thread allocation-free (the peak scratch is pre-allocated; the
+no-alloc guard covers it). Per-channel level is `peak(voice+inserts) ×
+sqrt(lg²+rg²)` (the channel's overall gain), i.e. post-fader; master is the final
+post-fader output peak. The UI keeps repainting while meters are still falling so
+the falloff animates after the transport stops.
+
 ## 2026-10-18 — Insert effects wired into the mix path
 **Decision:** `MixerStrip` and `Master` gain a `#[serde(default)] effects:
 Vec<EffectSpec>`; the engine builds each spec into a `dhun-dsp` processor

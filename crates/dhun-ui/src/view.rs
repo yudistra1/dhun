@@ -93,6 +93,13 @@ fn mixer_panel(ctx: &egui::Context, state: &mut EditorState, commands: &mut Vec<
             ui.label(RichText::new("MIXER").heading().color(theme::CYAN).strong());
             ui.add_space(6.0);
 
+            // Snapshot meter levels up front so the mutable channel loop below
+            // does not borrow `state.meters` at the same time.
+            let channel_meters: Vec<(f32, bool)> = (0..state.project.channels.len())
+                .map(|i| state.meters.channel(i))
+                .collect();
+            let (master_l, master_r, master_clip) = state.meters.master();
+
             let mut edited = false;
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
@@ -130,6 +137,9 @@ fn mixer_panel(ctx: &egui::Context, state: &mut EditorState, commands: &mut Vec<
                                     edited |=
                                         ui.toggle_value(&mut channel.mixer.solo, "Solo").changed();
                                 });
+                                let (level, clipped) =
+                                    channel_meters.get(i).copied().unwrap_or((0.0, false));
+                                meter_bar(ui, level, clipped);
                                 ui.push_id(("ch_fx", i), |ui| {
                                     edited |= fx_rack(ui, &mut channel.mixer.effects, accent);
                                 });
@@ -154,6 +164,7 @@ fn mixer_panel(ctx: &egui::Context, state: &mut EditorState, commands: &mut Vec<
                                     .trailing_fill(true),
                                 )
                                 .changed();
+                            meter_bar(ui, master_l.max(master_r), master_clip);
                             ui.push_id("master_fx", |ui| {
                                 edited |=
                                     fx_rack(ui, &mut state.project.master.effects, theme::AMBER);
@@ -478,6 +489,39 @@ fn cell(
         painter.rect_stroke(rect, rounding, stroke);
     }
     resp
+}
+
+/// A horizontal level meter (green → amber → red) with a clip indicator.
+fn meter_bar(ui: &mut egui::Ui, level: f32, clipped: bool) {
+    let w = ui.available_width().clamp(60.0, 190.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 8.0), Sense::hover());
+    let painter = ui.painter();
+    let rounding = Rounding::same(3.0);
+    painter.rect_filled(rect, rounding, theme::BG);
+
+    // sqrt gives quiet signals more visible travel.
+    let d = level.clamp(0.0, 1.0).sqrt();
+    if d > 0.0 {
+        let fill = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width() * d, rect.height()));
+        let col = if d < 0.6 {
+            theme::LIME
+        } else if d < 0.85 {
+            theme::AMBER
+        } else {
+            theme::MAGENTA
+        };
+        painter.rect_filled(fill, rounding, col);
+    }
+    painter.rect_stroke(rect, rounding, Stroke::new(1.0_f32, theme::LINE));
+
+    if clipped {
+        let s = 6.0_f32;
+        let dot = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - s, rect.top() + 1.0),
+            egui::vec2(s - 1.0, rect.height() - 2.0),
+        );
+        painter.rect_filled(dot, Rounding::same(2.0), theme::MAGENTA);
+    }
 }
 
 /// A glowing sequencer step cell. Returns the click response.

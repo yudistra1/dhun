@@ -19,6 +19,8 @@ pub struct EditorState {
     pub looping: bool,
     /// Index into `project.patterns` currently shown in the sequencer.
     pub selected_pattern: usize,
+    /// Live mixer level meters (fed by the host each frame).
+    pub meters: crate::meters::Meters,
 }
 
 impl EditorState {
@@ -30,6 +32,7 @@ impl EditorState {
             playing: false,
             looping: false,
             selected_pattern: 0,
+            meters: crate::meters::Meters::default(),
         }
     }
 
